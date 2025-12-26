@@ -72,7 +72,7 @@ def transcribe_recipe_task(self, job_id, image_path, urls, reprocess_recipe_id=N
     with app.app_context():
         try:
             def publish_status(job_obj, message, status=None):
-                """Update job message/status, persist, and emit SSE card."""
+                """Update job message/status, persist, and emit SSE card to session channel."""
                 logger.debug(f"Job {job_id}: Publishing status '{message}' (status={status})")
                 if status:
                     job_obj.status = status
@@ -80,8 +80,14 @@ def transcribe_recipe_task(self, job_id, image_path, urls, reprocess_recipe_id=N
                         job_obj.started_at = datetime.now(timezone.utc)
                 job_obj.last_status = message
                 db.session.commit()
+                
+                # Determine container_id for this update
+                target_id = f'recipe-{reprocess_recipe_id}' if reprocess_recipe_id else f'job-{job_obj.id}'
                 html_fragment = render_template('components/job_processing.html', job=job_obj, recipe_id=reprocess_recipe_id)
-                sse.publish(html_fragment, type='job-update', channel=f'job-{job_id}')
+                
+                # Publish to session channel with target element
+                wrapped_html = f'<div id="{target_id}" hx-swap-oob="true">{html_fragment}</div>'
+                sse.publish(wrapped_html, type='recipe-update', channel=f'session-{job_obj.session_id}')
 
             # Update job status to processing
             logger.info(f"Job {job_id}: Fetching job from database")
@@ -190,29 +196,34 @@ def transcribe_recipe_task(self, job_id, image_path, urls, reprocess_recipe_id=N
             logger.info(f"Job {job_id}: Job status updated successfully")
             
             # Publish completed recipe via SSE (pass URLs to template)
-            # Use recipe-based container_id for stable DOM if reprocessing, else job-based
-            logger.info(f"Job {job_id}: Rendering final recipe card, container_id={'recipe-' + str(reprocess_recipe_id) if reprocess_recipe_id else 'job-' + str(job_id)}")
-            container_id = f'recipe-{reprocess_recipe_id}' if reprocess_recipe_id else f'job-{job_id}'
-            
-            # Render recipe card with out-of-band swap to move it to results area
-            recipe_html = render_template('components/recipe_card.html', 
-                                 recipe=recipe, 
-                                 job=job,
-                                 urls=urls,
-                                 container_id=container_id)
-            
+            # Use recipe-based container_id for stable DOM (always recipe-<id>)
+            container_id_recipe = f'recipe-{recipe.id}'
+            logger.info(f"Job {job_id}: Rendering final recipe card, container_id={container_id_recipe}")
+
+            # Render recipe card with stable recipe-based container id
+            recipe_html = render_template(
+                'components/recipe_card.html',
+                recipe=recipe,
+                job=job,
+                urls=urls,
+                container_id=container_id_recipe,
+            )
+
+            # Determine the processing card id to delete (matches in-flight processing card)
+            processing_target_id = f'recipe-{reprocess_recipe_id}' if reprocess_recipe_id else f'job-{job_id}'
+
             # Create wrapper that will:
-            # 1. Remove the job from processing area (swap with empty)
+            # 1. Delete the processing card
             # 2. Prepend the recipe to results area (out-of-band)
             # 3. Remove the empty placeholder if it exists
             html = f'''
-                <div id="{container_id}"></div>
+                <div id="{processing_target_id}" hx-swap-oob="delete"></div>
                 <div hx-swap-oob="afterbegin:#results-area">{recipe_html}</div>
                 <div id="empty-placeholder" hx-swap-oob="delete"></div>
             '''
             
-            logger.info(f"Job {job_id}: Publishing completed recipe to SSE channel")
-            sse.publish(html, type='job-update', channel=f'job-{job_id}')
+            logger.info(f"Job {job_id}: Publishing completed recipe to SSE session channel")
+            sse.publish(html, type='recipe-update', channel=f'session-{job.session_id}')
             logger.info(f"Job {job_id}: Task completed successfully")
             
             return {'status': 'completed', 'recipe_id': recipe.id}
@@ -229,8 +240,9 @@ def transcribe_recipe_task(self, job_id, image_path, urls, reprocess_recipe_id=N
             db.session.commit()
             logger.info(f"Job {job_id}: Error status saved to database")
             
-            # Publish error via SSE
-            html = render_template('components/job_error.html', job=job, error=str(e))
-            sse.publish(html, type='job-update', channel=f'job-{job_id}')
+            # Publish error via SSE to session channel
+            error_html = render_template('components/job_error.html', job=job, error=str(e))
+            wrapped_html = f'<div id="job-{job_id}" hx-swap-oob="true">{error_html}</div>'
+            sse.publish(wrapped_html, type='recipe-update', channel=f'session-{job.session_id}')
             
             raise

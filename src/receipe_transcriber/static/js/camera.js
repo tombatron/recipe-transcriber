@@ -51,16 +51,14 @@ window.camera = {
         
         if (response.ok) {
           const html = await response.text()
-          // Prepend to processing area
-          const processingArea = document.getElementById('processing-area')
-          processingArea.insertAdjacentHTML('afterbegin', html)
-          
-          // Add header if it doesn't exist
-          if (!processingArea.querySelector('h3')) {
-            const header = document.createElement('h3')
-            header.className = 'text-lg font-semibold text-gray-900 mb-4'
-            header.textContent = 'Processing'
-            processingArea.insertBefore(header, processingArea.firstChild)
+          // Prepend to processing items container
+          const processingItems = document.getElementById('processing-items')
+          if (processingItems) {
+            processingItems.insertAdjacentHTML('afterbegin', html)
+          }
+          // Update header visibility if helper exists
+          if (typeof window.updateProcessingVisibility === 'function') {
+            window.updateProcessingVisibility()
           }
         } else {
           alert('Upload failed. Please try again.')

@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from flask import Blueprint, render_template, request, current_app
+from flask import Blueprint, render_template, request, current_app, session
 from werkzeug.utils import secure_filename
 from flask_sse import sse
 from receipe_transcriber import db
@@ -22,6 +22,12 @@ def index():
     """Main page with upload/camera interface."""
     from flask import url_for
     
+    # Ensure session has a session_id for SSE
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+    
+    session_id = session['session_id']
+    
     recent_recipes = current_app.db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(10).all()
     recipe_ids = [r.id for r in recent_recipes]
     job_map = {}
@@ -35,9 +41,12 @@ def index():
         for job in jobs:
             if job.recipe_id not in job_map:
                 job_map[job.recipe_id] = job
+    
+    # Get active jobs for THIS session only
     active_jobs = (
         current_app.db.session.query(TranscriptionJob)
         .filter(TranscriptionJob.status.in_(['pending', 'processing']))
+        .filter(TranscriptionJob.session_id == session_id)
         .order_by(TranscriptionJob.created_at.desc())
         .all()
     )
@@ -48,7 +57,7 @@ def index():
         'delete': url_for('main.delete_recipe', recipe_id=0, _external=False)
     }
     
-    return render_template('index.html', recent_recipes=recent_recipes, active_jobs=active_jobs, job_map=job_map, urls=urls)
+    return render_template('index.html', recent_recipes=recent_recipes, active_jobs=active_jobs, job_map=job_map, urls=urls, session_id=session_id)
 
 
 @bp.route('/jobs/<int:job_id>/status')
@@ -84,6 +93,12 @@ def upload_image():
     if not files or not any(f.filename for f in files):
         return '<div class="text-red-600">No files provided</div>', 400
     
+    # Ensure session has a session_id
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+    
+    session_id = session['session_id']
+    
     # Generate URLs with request context (once for all jobs)
     from flask import url_for
     urls = {
@@ -107,9 +122,10 @@ def upload_image():
         filepath = Path(current_app.config['UPLOAD_FOLDER']) / unique_filename
         file.save(filepath)
         
-        # Create transcription job
+        # Create transcription job with session_id
         job = TranscriptionJob(
             task_id=str(uuid.uuid4()),
+            session_id=session_id,
             image_path=str(filepath),
             status='pending',
             last_status='Upload received. Queued for processing...'
@@ -123,7 +139,7 @@ def upload_image():
             task_id=job.task_id
         )
         
-        # Render pending job card with SSE listener
+        # Render pending job card (no SSE connection needed in template)
         job_cards_html.append(render_template('components/job_status.html', job=job))
     
     if not job_cards_html:
@@ -170,9 +186,16 @@ def reprocess_recipe(recipe_id):
     if not recipe or not recipe.image_path or not os.path.exists(recipe.image_path):
         return '<div class="text-red-600">Recipe not found</div>', 404
     
-    # Create new transcription job
+    # Ensure session has a session_id
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+    
+    session_id = session['session_id']
+    
+    # Create new transcription job with session_id
     job = TranscriptionJob(
         task_id=str(uuid.uuid4()),
+        session_id=session_id,
         image_path=recipe.image_path,
         status='pending',
         last_status='Reprocessing requested. Queued for processing...'

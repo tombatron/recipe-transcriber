@@ -129,6 +129,7 @@ class TranscriptionJob(db.Model):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(String(100), nullable=False)
     image_path: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(
         String(20), default='pending', nullable=False
@@ -149,11 +150,13 @@ class TranscriptionJob(db.Model):
     def __init__(
         self,
         task_id: str,
+        session_id: str,
         image_path: str,
         status: str = 'pending',
         last_status: str = 'Queued',
     ) -> None:
         self.task_id = task_id
+        self.session_id = session_id
         self.image_path = image_path
         self.status = status
         self.last_status = last_status

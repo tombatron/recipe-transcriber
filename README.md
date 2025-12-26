@@ -29,6 +29,7 @@ Before you begin, ensure you have:
 - Python 3.10+
 - Redis (`sudo apt install redis` or `brew install redis`)
 - Ollama (https://ollama.ai)
+- Node.js 18+ and npm (for building Tailwind CSS locally)
 
 ### Installation
 
@@ -62,6 +63,12 @@ Before you begin, ensure you have:
    ```bash
    ./setup_database.sh
    ```
+
+5. **Install frontend dependencies (Tailwind CLI)**
+   ```bash
+   npm install
+   ```
+   This installs the local Tailwind CLI used to build `static/css/output.css`.
 
 ### Running the Application
 
@@ -100,9 +107,10 @@ ollama serve &
 **Option 4: Build Tailwind (Development)**
 ```bash
 # Terminal 4 (optional, only if modifying CSS)
-tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
-            -o ./src/receipe_transcriber/static/css/output.css --watch
+npx tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
+                -o ./src/receipe_transcriber/static/css/output.css --watch
 ```
+> The app now loads Tailwind from the built CSS (no CDN). Rebuild after changing `input.css`.
 
 ### Access the App
 

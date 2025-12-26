@@ -2,7 +2,11 @@
 
 {% block content %}
 {% from 'components/icons.html' import icon %}
-<div class="max-w-4xl mx-auto px-4 py-8">
+<div class="max-w-4xl mx-auto px-4 py-8" 
+  hx-ext="sse" 
+  sse-connect="/stream?channel=session-{{ session_id }}"
+  sse-swap="recipe-update"
+  hx-swap="none">
   <!-- Hero Section -->
   <div class="text-center mb-12">
     <h2 class="text-4xl font-semibold text-gray-900 mb-4">Transform Recipe Images to Digital</h2>
@@ -61,8 +65,8 @@
         </div>
         <h3 class="text-xl font-semibold text-gray-900 mb-2">Upload Image</h3>
         <p class="text-gray-600 mb-6">Select an existing photo from your device</p>
-        <form hx-post="{{ url_for('main.upload_image') }}" 
-              hx-target="#processing-area" 
+          <form hx-post="{{ url_for('main.upload_image') }}" 
+            hx-target="#processing-items" 
               hx-swap="afterbegin"
               hx-encoding="multipart/form-data"
               id="upload-form">
@@ -83,12 +87,14 @@
 
   <!-- Processing Area (always at top) -->
   <div id="processing-area" class="space-y-4 mb-8">
-    {% if active_jobs %}
-      <h3 class="text-lg font-semibold text-gray-900 mb-4">Processing</h3>
-      {% for job in active_jobs %}
-        {% include 'components/job_processing.html' %}
-      {% endfor %}
-    {% endif %}
+    <div id="processing-header" class="text-lg font-semibold text-gray-900 mb-4{% if not active_jobs %} hidden{% endif %}">Processing</div>
+    <div id="processing-items" class="space-y-4">
+      {% if active_jobs %}
+        {% for job in active_jobs %}
+          {% include 'components/job_processing.html' %}
+        {% endfor %}
+      {% endif %}
+    </div>
   </div>
 
   <!-- Completed Recipes -->

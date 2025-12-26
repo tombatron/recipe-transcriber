@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Recipe Transcriber{% endblock %}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/output.css') }}">
   
   <!-- HTMX Core (local) -->
   <script src="{{ url_for('static', filename='js/vendor/htmx.min.js') }}"></script>
@@ -26,6 +26,14 @@
   </main>
   
   <script>
+    // Toggle processing header visibility based on presence of cards
+    window.updateProcessingVisibility = function() {
+      const header = document.getElementById('processing-header')
+      const items = document.querySelectorAll('#processing-items [data-processing-card]')
+      if (!header) return
+      header.classList.toggle('hidden', items.length === 0)
+    }
+
     // Reset file input after successful upload
     document.body.addEventListener('htmx:afterRequest', function(evt) {
       if (evt.detail.successful && evt.detail.elt.id === 'upload-form') {
@@ -53,6 +61,20 @@
           placeholder.remove();
         }
       }
+      // Recompute processing header visibility after any swap
+      if (evt.detail.target && (evt.detail.target.id === 'processing-items' || evt.detail.target.closest && evt.detail.target.closest('#processing-items'))) {
+        window.updateProcessingVisibility();
+      }
+    });
+
+    // Handle OOB swaps as well
+    document.body.addEventListener('htmx:oobAfterSwap', function() {
+      window.updateProcessingVisibility();
+    });
+
+    // Initialize on load
+    document.addEventListener('DOMContentLoaded', function() {
+      window.updateProcessingVisibility();
     });
   </script>
 </body>
