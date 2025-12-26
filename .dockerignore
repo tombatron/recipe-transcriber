@@ -1,0 +1,58 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+
+# Database (will be volume mounted)
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads (will be volume mounted)
+uploads/
+
+# Documentation
+*.md
+README.md
+docs/
+
+# Node/Tailwind (CSS already built)
+node_modules/
+package.json
+package-lock.json
+tailwind.config.js
+
+# Scripts
+*.sh
+run_dev.sh
+setup_database.sh

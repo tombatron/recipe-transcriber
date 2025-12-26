@@ -1,0 +1,125 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: receipe-redis
+    restart: unless-stopped
+    volumes:
+      - ./redis-data:/data
+    networks:
+      - receipe-internal
+    command: redis-server --appendonly yes --appendfsync everysec
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: receipe-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - receipe-internal
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Pre-pull models on startup
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /bin/ollama serve &
+        sleep 10
+        ollama pull qwen3-vl
+        ollama pull llama3.2
+        wait
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: receipe-web
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - DATABASE_URL=sqlite:////app/data/receipe.db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    networks:
+      - receipe-internal
+      - proxy  # Connect to your external Traefik network
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    labels:
+      # Traefik labels for external Traefik instance
+      - "traefik.enable=true"
+      - "traefik.http.routers.receipe-web.rule=Host(`${DOMAIN:-recipes.example.com}`)"
+      - "traefik.http.routers.receipe-web.entrypoints=https"
+      - "traefik.http.routers.receipe-web.tls=true"
+      - "traefik.http.routers.receipe-web.tls.certresolver=route53"
+      - "traefik.http.services.receipe-web.loadbalancer.server.port=8000"
+      # SSE-specific settings (disable buffering)
+      - "traefik.http.middlewares.receipe-sse.buffering.retryExpression=IsNetworkError() && Attempts() < 2"
+      - "traefik.http.routers.receipe-web.middlewares=receipe-sse@docker"
+    command: >
+      sh -c "
+      flask db upgrade &&
+      gunicorn --worker-class gevent --workers 2 --bind 0.0.0.0:8000 --timeout 120 --log-level info 'app:create_app()'
+      "
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: receipe-worker
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - DATABASE_URL=sqlite:////app/data/receipe.db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    networks:
+      - receipe-internal
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    command: celery -A celery_app.celery worker --loglevel=info --concurrency=2
+
+networks:
+  receipe-internal:
+    driver: bridge
+  proxy:
+    external: true  # Your existing Traefik network
+
+volumes:
+  ollama-data:

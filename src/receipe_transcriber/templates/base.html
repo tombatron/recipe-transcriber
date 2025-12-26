@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Recipe Transcriber{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- HTMX Core (local) -->
+  <script src="{{ url_for('static', filename='js/vendor/htmx.min.js') }}"></script>
+  
+  <!-- HTMX SSE Extension (local) -->
+  <script src="{{ url_for('static', filename='js/vendor/sse.js') }}"></script>
+</head>
+<body class="min-h-screen bg-gray-50">
+  <header class="bg-white border-b border-gray-200">
+    <div class="max-w-4xl mx-auto px-4 py-6">
+      <h1 class="text-2xl font-semibold text-gray-900">
+        <a href="{{ url_for('main.index') }}" class="hover:text-amber-600 transition-colors">Recipe Transcriber</a>
+      </h1>
+    </div>
+  </header>
+  
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  
+  <script>
+    // Reset file input after successful upload
+    document.body.addEventListener('htmx:afterRequest', function(evt) {
+      if (evt.detail.successful && evt.detail.elt.id === 'upload-form') {
+        // Reset the form to allow another upload
+        evt.detail.elt.reset();
+      }
+    });
+    
+    // Clean up SSE connections when element is swapped out
+    document.body.addEventListener('htmx:beforeSwap', function(evt) {
+      // If the target element has an active SSE connection, close it
+      const target = evt.detail.target;
+      if (target && target.hxSSE) {
+        console.log('Closing SSE connection for', target.id);
+        target.hxSSE.close();
+        delete target.hxSSE;
+      }
+    });
+    
+    // Remove empty placeholder when new content is added to results area
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+      if (evt.detail.target.id === 'results-area') {
+        const placeholder = document.getElementById('empty-placeholder');
+        if (placeholder) {
+          placeholder.remove();
+        }
+      }
+    });
+  </script>
+</body>
+</html>

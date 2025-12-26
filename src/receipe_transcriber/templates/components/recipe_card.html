@@ -1,0 +1,145 @@
+{% from 'components/icons.html' import icon %}
+<div id="{{ container_id | default('recipe-' ~ recipe.id, true) }}" class="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+  
+  <!-- Recipe Header -->
+  <div class="mb-6">
+    <h2 class="text-3xl font-semibold text-gray-900 mb-4">{{ recipe.title }}</h2>
+    {% if job %}
+    <div class="flex flex-wrap gap-4 text-sm text-gray-600 mb-3">
+      {% if job.completed_at %}
+      <div class="flex items-center">
+        {{ icon('clock', 'w-4 h-4 mr-2 text-amber-600') }}
+        Transcribed: {{ job.completed_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      </div>
+      {% endif %}
+      {% if job.started_at and job.completed_at %}
+        {% set total_seconds = (job.completed_at - job.started_at).total_seconds() %}
+        {% set minutes = (total_seconds // 60) | int %}
+        {% set seconds = (total_seconds % 60) | int %}
+        <div class="flex items-center">
+          {{ icon('bolt', 'w-4 h-4 mr-2 text-amber-600') }}
+          Duration: {{ minutes }}m {{ '%02d' % seconds }}s
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
+    <div class="flex flex-wrap gap-4 text-sm text-gray-600">
+      {% if recipe.prep_time %}
+        <div class="flex items-center">
+          {{ icon('clock', 'w-5 h-5 mr-2 text-amber-600') }}
+          Prep: {{ recipe.prep_time }}
+        </div>
+      {% endif %}
+      {% if recipe.cook_time %}
+        <div class="flex items-center">
+          {{ icon('flame', 'w-5 h-5 mr-2 text-amber-600') }}
+          Cook: {{ recipe.cook_time }}
+        </div>
+      {% endif %}
+      {% if recipe.servings %}
+        <div class="flex items-center">
+          {{ icon('users', 'w-5 h-5 mr-2 text-amber-600') }}
+          Servings: {{ recipe.servings }}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Ingredients -->
+  {% if recipe.ingredients %}
+  <div class="mb-8">
+    <h3 class="text-xl font-semibold text-gray-900 mb-4">Ingredients</h3>
+    <ul class="space-y-2">
+      {% for ingredient in recipe.ingredients|sort(attribute='order') %}
+      <li class="flex items-start">
+        <span class="inline-block w-2 h-2 bg-amber-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
+        <span class="text-gray-700">
+          {% if ingredient.quantity %}{{ ingredient.quantity }}{% endif %}
+          {% if ingredient.unit %}{{ ingredient.unit }}{% endif %}
+          {{ ingredient.item }}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <!-- Instructions -->
+  {% if recipe.instructions %}
+  <div class="mb-6">
+    <h3 class="text-xl font-semibold text-gray-900 mb-4">Instructions</h3>
+    <ol class="space-y-4">
+      {% for instruction in recipe.instructions|sort(attribute='step_number') %}
+      <li class="flex items-start">
+        <span class="inline-flex items-center justify-center w-8 h-8 bg-amber-600 text-white rounded-full font-semibold mr-4 flex-shrink-0">
+          {{ instruction.step_number }}
+        </span>
+        <p class="text-gray-700 pt-1 leading-relaxed">{{ instruction.description }}</p>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+  {% endif %}
+
+  <!-- Notes -->
+  {% if recipe.notes %}
+  <div class="mt-6 p-4 bg-amber-50 rounded-xl border border-amber-200">
+    <p class="text-sm text-gray-700"><strong>Notes:</strong> {{ recipe.notes }}</p>
+  </div>
+  {% endif %}
+  
+  <!-- Action Buttons -->
+  <div class="mt-6 pt-6 border-t border-gray-200 flex gap-3">
+    {% set paprika_lines = [] %}
+    {% set _ = paprika_lines.append(recipe.title) %}
+    {% set _ = paprika_lines.append('') %}
+    {% if recipe.servings %}{% set _ = paprika_lines.append('Servings: ' ~ recipe.servings) %}{% endif %}
+    {% if recipe.prep_time %}{% set _ = paprika_lines.append('Prep Time: ' ~ recipe.prep_time) %}{% endif %}
+    {% if recipe.cook_time %}{% set _ = paprika_lines.append('Cook Time: ' ~ recipe.cook_time) %}{% endif %}
+    {% set _ = paprika_lines.append('') %}
+    {% set _ = paprika_lines.append('Ingredients:') %}
+    {% for ingredient in recipe.ingredients|sort(attribute='order') %}
+      {% set line = '-' %}
+      {% if ingredient.quantity %}{% set line = line ~ ' ' ~ ingredient.quantity %}{% endif %}
+      {% if ingredient.unit %}{% set line = line ~ ' ' ~ ingredient.unit %}{% endif %}
+      {% set line = line ~ ' ' ~ ingredient.item %}
+      {% set _ = paprika_lines.append(line) %}
+    {% endfor %}
+    {% set _ = paprika_lines.append('') %}
+    {% set _ = paprika_lines.append('Directions:') %}
+    {% for instruction in recipe.instructions|sort(attribute='step_number') %}
+      {% set _ = paprika_lines.append((instruction.step_number|string) ~ '. ' ~ instruction.description) %}
+    {% endfor %}
+    {% if recipe.notes %}
+      {% set _ = paprika_lines.append('') %}
+      {% set _ = paprika_lines.append('Notes:') %}
+      {% set _ = paprika_lines.append(recipe.notes) %}
+    {% endif %}
+    {% set _ = paprika_lines.append('') %}
+    {% set paprika_text = paprika_lines | join('\n') %}
+
+    <button type="button"
+            onclick="navigator.clipboard.writeText(decodeURIComponent(this.dataset.paprika))"
+            data-paprika="{{ paprika_text | urlencode }}"
+            class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold px-4 py-2 rounded-lg border border-gray-200 transition-colors">
+      {{ icon('clipboard', 'w-5 h-5 inline-block mr-2') }}
+      Copy for Paprika
+    </button>
+    <button hx-post="{{ urls.reprocess.replace('/0/', '/' + recipe.id|string + '/') }}"
+            hx-target="#{{ container_id | default('recipe-' ~ recipe.id, true) }}"
+            hx-swap="outerHTML"
+            class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+      {{ icon('refresh', 'w-5 h-5 inline-block mr-2') }}
+      Reprocess
+    </button>
+    <button hx-delete="{{ urls.delete.replace('/0/', '/' + recipe.id|string + '/') }}"
+            hx-target="#{{ container_id | default('recipe-' ~ recipe.id, true) }}"
+            hx-swap="outerHTML"
+            hx-confirm="Are you sure you want to delete this recipe? This cannot be undone."
+            class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+      {{ icon('trash', 'w-5 h-5 inline-block mr-2') }}
+      Delete
+    </button>
+  </div>
+</div>
+

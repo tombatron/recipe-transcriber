@@ -1,0 +1,14 @@
+<div id="job-{{ job.id }}" 
+     class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"
+     hx-ext="sse"
+     sse-connect="/stream?channel=job-{{ job.id }}"
+     sse-swap="job-update"
+     hx-swap="outerHTML">
+  <div class="flex items-center space-x-4">
+    <div class="animate-pulse rounded-full h-8 w-8 bg-gray-300"></div>
+    <div>
+      <p class="text-lg font-semibold text-gray-900">{{ job.last_status or 'Upload received. Queued for processing...' }}</p>
+      <p class="text-gray-600">We will update this card as the phases complete.</p>
+    </div>
+  </div>
+</div>
