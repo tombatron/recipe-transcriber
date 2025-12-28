@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from flask import Blueprint, render_template, request, current_app, session
 from werkzeug.utils import secure_filename
-from flask_sse import sse
+from flask import url_for
 from receipe_transcriber import db
 from receipe_transcriber.models import TranscriptionJob, Recipe, Ingredient, Instruction
 from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task
@@ -19,9 +19,7 @@ def allowed_file(filename):
 
 @bp.route('/')
 def index():
-    """Main page with upload/camera interface."""
-    from flask import url_for
-    
+    """Main page with upload/camera interface."""   
     # Ensure session has a session_id for SSE
     if 'session_id' not in session:
         session['session_id'] = str(uuid.uuid4())
@@ -60,6 +58,7 @@ def index():
     return render_template('index.html', recent_recipes=recent_recipes, active_jobs=active_jobs, job_map=job_map, urls=urls, session_id=session_id)
 
 
+# TODO: Move to the webhooks blueprint.
 @bp.route('/jobs/<int:job_id>/status')
 def job_status(job_id):
     """HTMX poll endpoint to refresh a job card (fallback to SSE)."""
@@ -67,7 +66,6 @@ def job_status(job_id):
     if not job:
         return '', 404
 
-    from flask import url_for
     urls = {
         'reprocess': url_for('main.reprocess_recipe', recipe_id=0, _external=False),
         'delete': url_for('main.delete_recipe', recipe_id=0, _external=False)
@@ -100,7 +98,6 @@ def upload_image():
     session_id = session['session_id']
     
     # Generate URLs with request context (once for all jobs)
-    from flask import url_for
     urls = {
         'reprocess': url_for('main.reprocess_recipe', recipe_id=0, _external=False),
         'delete': url_for('main.delete_recipe', recipe_id=0, _external=False)
@@ -113,6 +110,7 @@ def upload_image():
             continue
             
         if not allowed_file(file.filename):
+            # TODO: Create a Jinja Template for this.
             job_cards_html.append(f'<div class="text-red-600 p-4 bg-red-50 rounded-lg mb-4">Invalid file type: {file.filename}</div>')
             continue
         
@@ -139,10 +137,11 @@ def upload_image():
             task_id=job.task_id
         )
         
-        # Render pending job card (no SSE connection needed in template)
+        # Render pending job card using Turbo.
         job_cards_html.append(render_template('components/job_status.html', job=job))
     
     if not job_cards_html:
+        # Replace this with turbo.
         return '<div class="text-red-600">No valid files to process</div>', 400
     
     # Return all job cards (they'll be prepended to results area)

@@ -1,7 +1,7 @@
 import os
 from flask import Flask
 from flask_migrate import Migrate
-from flask_sse import sse
+from turbo_flask import Turbo
 
 from .config import Config
 
@@ -9,6 +9,7 @@ from .config import Config
 from .models import db
 
 migrate = Migrate()
+turbo = Turbo()
 
 
 def make_celery(app):
@@ -16,9 +17,9 @@ def make_celery(app):
     from .celery_app import init_celery
     return init_celery(app)
 
-
 def create_app(config_class=Config):
     app = Flask(__name__)
+    turbo.init_app(app)
     
     # Load config FIRST
     app.config.from_object(config_class)
@@ -30,10 +31,7 @@ def create_app(config_class=Config):
     # Configure Redis URL for SSE
     if not app.config.get('REDIS_URL'):
         app.config['REDIS_URL'] = 'redis://localhost:6379/0'
-    
-    # Register SSE blueprint
-    app.register_blueprint(sse, url_prefix='/stream')
-    
+        
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
