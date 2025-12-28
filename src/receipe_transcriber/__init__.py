@@ -11,7 +11,6 @@ from .models import db
 migrate = Migrate()
 turbo = Turbo()
 
-
 def make_celery(app):
     """Configure Celery with Flask app context."""
     from .celery_app import init_celery
@@ -46,8 +45,9 @@ def create_app(config_class=Config):
     app.db = db
     
     # Register blueprints
-    from .routes import main
+    from .routes import main, webhooks
     app.register_blueprint(main.bp)
+    app.register_blueprint(webhooks.bp)
     
     # Add CLI command for database initialization
     @app.cli.command()

@@ -18,6 +18,7 @@ class Recipe(db.Model):
     __tablename__ = 'recipes'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey('transcription_jobs.job_id'))
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     prep_time: Mapped[Optional[str]] = mapped_column(String(50), default=None)
     cook_time: Mapped[Optional[str]] = mapped_column(String(50), default=None)
@@ -46,6 +47,7 @@ class Recipe(db.Model):
 
     def __init__(
         self,
+        job_id: str,
         title: str,
         prep_time: Optional[str] = None,
         cook_time: Optional[str] = None,
@@ -53,6 +55,7 @@ class Recipe(db.Model):
         notes: Optional[str] = None,
         image_path: Optional[str] = None,
     ) -> None:
+        self.job_id = job_id
         self.title = title
         self.prep_time = prep_time
         self.cook_time = cook_time
@@ -61,8 +64,7 @@ class Recipe(db.Model):
         self.image_path = image_path
 
     def __repr__(self) -> str:
-        return f'<Recipe {self.title}>'
-
+        return f'<Recipe {self.title},{self.job_id}>'
 
 class Ingredient(db.Model):
     __tablename__ = 'ingredients'
@@ -81,13 +83,11 @@ class Ingredient(db.Model):
 
     def __init__(
         self,
-        recipe_id: int,
         item: str,
         quantity: Optional[str] = None,
         unit: Optional[str] = None,
         order: int = 0,
     ) -> None:
-        self.recipe_id = recipe_id
         self.item = item
         self.quantity = quantity
         self.unit = unit
@@ -95,7 +95,6 @@ class Ingredient(db.Model):
 
     def __repr__(self) -> str:
         return f'<Ingredient {self.item}>'
-
 
 class Instruction(db.Model):
     __tablename__ = 'instructions'
@@ -112,30 +111,26 @@ class Instruction(db.Model):
 
     def __init__(
         self,
-        recipe_id: int,
         step_number: int,
         description: str,
     ) -> None:
-        self.recipe_id = recipe_id
         self.step_number = step_number
         self.description = description
 
     def __repr__(self) -> str:
         return f'<Instruction {self.step_number}>'
 
-
 class TranscriptionJob(db.Model):
     __tablename__ = 'transcription_jobs'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    task_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    job_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     session_id: Mapped[str] = mapped_column(String(100), nullable=False)
     image_path: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(
         String(20), default='pending', nullable=False
     )  # pending, processing, completed, failed
     last_status: Mapped[str] = mapped_column(String(255), default='Queued', nullable=False)
-    recipe_id: Mapped[Optional[int]] = mapped_column(ForeignKey('recipes.id'), default=None)
     error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
@@ -149,17 +144,17 @@ class TranscriptionJob(db.Model):
 
     def __init__(
         self,
-        task_id: str,
+        job_id: str,
         session_id: str,
         image_path: str,
         status: str = 'pending',
         last_status: str = 'Queued',
     ) -> None:
-        self.task_id = task_id
+        self.job_id = job_id
         self.session_id = session_id
         self.image_path = image_path
         self.status = status
         self.last_status = last_status
 
     def __repr__(self) -> str:
-        return f'<TranscriptionJob {self.task_id} - {self.status}>'
+        return f'<TranscriptionJob {self.job_id} - {self.status}>'

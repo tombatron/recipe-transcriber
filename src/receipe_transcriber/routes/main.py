@@ -2,61 +2,34 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from flask import Blueprint, render_template, request, current_app, session
+from flask import Blueprint, render_template, request, current_app, session, Response
 from werkzeug.utils import secure_filename
 from flask import url_for
 from receipe_transcriber import db
 from receipe_transcriber.models import TranscriptionJob, Recipe, Ingredient, Instruction
 from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task
+from .. import turbo
 
 bp = Blueprint('main', __name__)
-
 
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in current_app.config['ALLOWED_EXTENSIONS']
 
-
 @bp.route('/')
 def index():
     """Main page with upload/camera interface."""   
-    # Ensure session has a session_id for SSE
+
     if 'session_id' not in session:
         session['session_id'] = str(uuid.uuid4())
-    
-    session_id = session['session_id']
-    
-    recent_recipes = current_app.db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(10).all()
-    recipe_ids = [r.id for r in recent_recipes]
-    job_map = {}
-    if recipe_ids:
-        jobs = (
-            current_app.db.session.query(TranscriptionJob)
-            .filter(TranscriptionJob.recipe_id.in_(recipe_ids))
-            .order_by(TranscriptionJob.recipe_id, TranscriptionJob.completed_at.desc().nullslast(), TranscriptionJob.created_at.desc())
-            .all()
-        )
-        for job in jobs:
-            if job.recipe_id not in job_map:
-                job_map[job.recipe_id] = job
-    
-    # Get active jobs for THIS session only
-    active_jobs = (
-        current_app.db.session.query(TranscriptionJob)
-        .filter(TranscriptionJob.status.in_(['pending', 'processing']))
-        .filter(TranscriptionJob.session_id == session_id)
-        .order_by(TranscriptionJob.created_at.desc())
-        .all()
-    )
-    
-    # Generate URLs for templates
-    urls = {
-        'reprocess': url_for('main.reprocess_recipe', recipe_id=0, _external=False),
-        'delete': url_for('main.delete_recipe', recipe_id=0, _external=False)
-    }
-    
-    return render_template('index.html', recent_recipes=recent_recipes, active_jobs=active_jobs, job_map=job_map, urls=urls, session_id=session_id)
+        
+    return render_template('index.html')
 
+@bp.route('/recipes')
+def recipes():
+    recent_recipes = current_app.db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(10).all()
+    
+    return render_template('components/recent_recipes.html', recent_recipes=recent_recipes)
 
 # TODO: Move to the webhooks blueprint.
 @bp.route('/jobs/<int:job_id>/status')
@@ -82,7 +55,6 @@ def job_status(job_id):
     # pending or processing fallback
     return render_template('components/job_processing.html', job=job, job_status_url=url_for('main.job_status', job_id=job.id))
 
-
 @bp.route('/upload', methods=['POST'])
 def upload_image():
     """Handle image upload(s) and start transcription. Returns pending job card(s)."""
@@ -96,22 +68,17 @@ def upload_image():
         session['session_id'] = str(uuid.uuid4())
     
     session_id = session['session_id']
-    
-    # Generate URLs with request context (once for all jobs)
-    urls = {
-        'reprocess': url_for('main.reprocess_recipe', recipe_id=0, _external=False),
-        'delete': url_for('main.delete_recipe', recipe_id=0, _external=False)
-    }
-    
-    job_cards_html = []
+
+    processed_files = 0
+
+    turbo_operations = []
     
     for file in files:
         if not file or not file.filename:
             continue
             
         if not allowed_file(file.filename):
-            # TODO: Create a Jinja Template for this.
-            job_cards_html.append(f'<div class="text-red-600 p-4 bg-red-50 rounded-lg mb-4">Invalid file type: {file.filename}</div>')
+            turbo.push(turbo.prepend(render_template('components/invalid_file_type.html', filename=file.filename), target='results-area'))
             continue
         
         # Save uploaded file
@@ -122,30 +89,32 @@ def upload_image():
         
         # Create transcription job with session_id
         job = TranscriptionJob(
-            task_id=str(uuid.uuid4()),
+            job_id=str(uuid.uuid1()),
             session_id=session_id,
             image_path=str(filepath),
             status='pending',
             last_status='Upload received. Queued for processing...'
         )
+
+        # TODO: Fix how we're interacting with the DB here. 
         current_app.db.session.add(job)
         current_app.db.session.commit()
         
         # Start Celery task with URLs
         transcribe_recipe_task.apply_async(
-            args=[job.id, str(filepath), urls],
-            task_id=job.task_id
+            args=[job.job_id, str(filepath), url_for('webhooks.update_status', _external=True), url_for('webhooks.record_recipe', _external=True)]
         )
         
         # Render pending job card using Turbo.
-        job_cards_html.append(render_template('components/job_status.html', job=job))
+        # turbo.push(turbo.prepend(render_template('components/job_status.html', job=job), target='results-area'))
+        turbo_operations.append(turbo.prepend(render_template('components/job_status.html', job=job), target='results-area'))
+        processed_files += 1
     
-    if not job_cards_html:
-        # Replace this with turbo.
-        return '<div class="text-red-600">No valid files to process</div>', 400
+    # if not processed_files:
+    #     return render_template('components/no_valid_files.html'), 400
     
-    # Return all job cards (they'll be prepended to results area)
-    return '\n'.join(job_cards_html)
+    # TODO: Need to handle the case where the websocket isn't available.
+    return Response(turbo.push(turbo_operations), mimetype='text/vnd.turbo-stream.html')
 
 
 @bp.route('/recipes/<int:recipe_id>/delete', methods=['DELETE'])

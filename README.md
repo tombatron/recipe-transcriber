@@ -90,27 +90,37 @@ celery -A celery_app.celery worker --loglevel=info
 
 **Option 2: Manual Setup**
 
-Open 3 terminals and run:
+Open 4 terminals and run:
 
 ```bash
 # Terminal 1: Redis
 redis-server
 
-# Terminal 2: Celery Worker
+# Terminal 2: Ollama
+ollama serve
+
+# Terminal 3: Celery Worker
 celery -A celery_app.celery worker --loglevel=info
 
-# Terminal 3: Flask + Ollama (in background)
-ollama serve &
+# Terminal 4: Flask
 ./run_dev.sh
 ```
 
-**Option 4: Build Tailwind (Development)**
+**Option 3: Build Tailwind CSS (Required for Development)**
+
+In a separate terminal, watch for CSS changes and auto-rebuild:
+
 ```bash
-# Terminal 4 (optional, only if modifying CSS)
 npx tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
                 -o ./src/receipe_transcriber/static/css/output.css --watch
 ```
-> The app now loads Tailwind from the built CSS (no CDN). Rebuild after changing `input.css`.
+
+> **Important**: Tailwind CSS must be compiled before the app will display properly. The app loads from the built CSS file (not CDN). After installing or modifying `input.css`, rebuild using the command above.
+>
+> If you've already modified CSS and don't see changes:
+> - Make sure the Tailwind watch process is running
+> - Check that `output.css` was updated (check file timestamp)
+> - Refresh your browser (hard refresh: Ctrl+Shift+R)
 
 ### Access the App
 
@@ -315,17 +325,39 @@ flask db downgrade
 pytest tests/
 ```
 
-### Tailwind CSS Development
+### Tailwind CSS Compilation
+
+**Development (Watch Mode)**
+
+Automatically rebuild CSS when you make changes:
 
 ```bash
-# Watch mode (auto-rebuild on changes)
-tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
-            -o ./src/receipe_transcriber/static/css/output.css --watch
-
-# Production build (minified)
-tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
-            -o ./src/receipe_transcriber/static/css/output.css --minify
+npx tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
+                -o ./src/receipe_transcriber/static/css/output.css --watch
 ```
+
+Run this in a separate terminal while developing. The watch process will:
+- Monitor your HTML templates for Tailwind class usage
+- Recompile `output.css` whenever you change files
+- Output will show in the terminal when rebuilds happen
+
+**Production Build (Minified)**
+
+For production deployment, create a minified build:
+
+```bash
+npx tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
+                -o ./src/receipe_transcriber/static/css/output.css --minify
+```
+
+**Troubleshooting Tailwind Issues**
+
+If styles aren't appearing:
+1. Verify `output.css` exists and was recently updated
+2. Check that the Tailwind watch process is running
+3. Hard refresh your browser: `Ctrl+Shift+R` (or `Cmd+Shift+R` on Mac)
+4. Check for errors in the Tailwind CLI terminal output
+5. Ensure class names in HTML match Tailwind conventions (no typos)
 
 ## 📚 Additional Documentation
 
