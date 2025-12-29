@@ -124,14 +124,18 @@
       {{ icon('clipboard', 'w-5 h-5 inline-block mr-2') }}
       Copy for Paprika
     </button>
-    <button class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
-      {{ icon('refresh', 'w-5 h-5 inline-block mr-2') }}
-      Reprocess
-    </button>
-    <button class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
-      {{ icon('trash', 'w-5 h-5 inline-block mr-2') }}
-      Delete
-    </button>
+    <form class="flex flex-1" action="{{url_for('main.reprocess_recipe', external_recipe_id=recipe.job_id)}}" method="post">
+      <button class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+        {{ icon('refresh', 'w-5 h-5 inline-block mr-2') }}
+        Reprocess
+      </button>
+    </form>
+    <form class="flex flex-1" action="{{url_for('main.delete_recipe', external_recipe_id=recipe.job_id)}}" method="delete">
+      <button type="submit" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+        {{ icon('trash', 'w-5 h-5 inline-block mr-2') }}
+        Delete
+      </button>
+    </form>
   </div>
 </turbo-frame>
 

@@ -1,14 +1,13 @@
 import os
 import uuid
-from datetime import datetime
 from pathlib import Path
 from flask import Blueprint, render_template, request, current_app, session, Response
 from werkzeug.utils import secure_filename
 from flask import url_for
 from receipe_transcriber import db
-from receipe_transcriber.models import TranscriptionJob, Recipe, Ingredient, Instruction
-from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task
-from .. import turbo
+from receipe_transcriber.models import TranscriptionJob, Recipe
+from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task, reprocess_transcribe_recipe_task
+from .. import turbo, db
 
 bp = Blueprint('main', __name__)
 
@@ -30,30 +29,6 @@ def recipes():
     recent_recipes = current_app.db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(10).all()
     
     return render_template('components/recent_recipes.html', recent_recipes=recent_recipes)
-
-# TODO: Move to the webhooks blueprint.
-@bp.route('/jobs/<int:job_id>/status')
-def job_status(job_id):
-    """HTMX poll endpoint to refresh a job card (fallback to SSE)."""
-    job = current_app.db.session.get(TranscriptionJob, job_id)
-    if not job:
-        return '', 404
-
-    urls = {
-        'reprocess': url_for('main.reprocess_recipe', recipe_id=0, _external=False),
-        'delete': url_for('main.delete_recipe', recipe_id=0, _external=False)
-    }
-
-    if job.status == 'failed':
-        return render_template('components/job_error.html', job=job, error=job.error_message or 'An error occurred')
-
-    if job.status == 'completed' and job.recipe_id:
-        recipe = current_app.db.session.get(Recipe, job.recipe_id)
-        if recipe:
-            return render_template('components/recipe_card.html', recipe=recipe, job=job, urls=urls)
-
-    # pending or processing fallback
-    return render_template('components/job_processing.html', job=job, job_status_url=url_for('main.job_status', job_id=job.id))
 
 @bp.route('/upload', methods=['POST'])
 def upload_image():
@@ -116,77 +91,63 @@ def upload_image():
     # TODO: Need to handle the case where the websocket isn't available.
     return Response(turbo.push(turbo_operations), mimetype='text/vnd.turbo-stream.html')
 
+@bp.route('/recipes/<string:external_recipe_id>/delete', methods=['DELETE'])
+def delete_recipe(external_recipe_id):
+    """Delete a recipe. Turbo will remove the element from DOM."""
+    recipe = db.session.query(Recipe).filter(Recipe.job_id == external_recipe_id).one_or_none()
 
-@bp.route('/recipes/<int:recipe_id>/delete', methods=['DELETE'])
-def delete_recipe(recipe_id):
-    """Delete a recipe. HTMX will remove the element from DOM."""
-    recipe = current_app.db.session.get(Recipe, recipe_id)
     if recipe:
         # Delete associated file if it exists
         if recipe.image_path and os.path.exists(recipe.image_path):
             os.remove(recipe.image_path)
         
         # Delete from database (cascades to ingredients and instructions)
-        current_app.db.session.delete(recipe)
-        current_app.db.session.commit()
-        
-        # Check if there are any recipes left
-        remaining_count = current_app.db.session.query(Recipe).count()
-        if remaining_count == 0:
-            # Return placeholder with OOB swap to update entire results area
-            return '''
-            <div id="recipe-''' + str(recipe_id) + '''"></div>
-            <div id="results-area" hx-swap-oob="true" class="space-y-6">
-                <div id="empty-placeholder" class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-                    <p class="text-gray-600">No recipes yet. Upload an image to get started!</p>
-                </div>
-            </div>
-            ''', 200
+        db.session.delete(recipe)
+        db.session.commit()
+
+        turbo.push(turbo.remove(target=f'recipe-{recipe.job_id}'))
     
-    # Return empty response - HTMX will handle the swap
-    return '', 200
+    return '', 200 #Response(turbo.push(turbo.remove(target=f'recipe-{recipe.job_id}')), mimetype='text/vnd.turbo-stream.html')
 
 
-@bp.route('/recipes/<int:recipe_id>/reprocess', methods=['POST'])
-def reprocess_recipe(recipe_id):
+@bp.route('/recipes/<string:external_recipe_id>/reprocess', methods=['POST'])
+def reprocess_recipe(external_recipe_id):
     """Reprocess an existing recipe. Returns processing status."""
-    recipe = current_app.db.session.get(Recipe, recipe_id)
-    if not recipe or not recipe.image_path or not os.path.exists(recipe.image_path):
-        return '<div class="text-red-600">Recipe not found</div>', 404
+    recipe = db.session.query(Recipe).filter(Recipe.job_id == external_recipe_id).one_or_none()
+
+    if not recipe:
+        return '', 404
     
     # Ensure session has a session_id
     if 'session_id' not in session:
         session['session_id'] = str(uuid.uuid4())
     
     session_id = session['session_id']
+
+    # TODO: Consolidate this with the upload logic. 
     
     # Create new transcription job with session_id
     job = TranscriptionJob(
-        task_id=str(uuid.uuid4()),
+        job_id=str(uuid.uuid1()),
         session_id=session_id,
-        image_path=recipe.image_path,
+        image_path=recipe.image_path, #type: ignore
         status='pending',
         last_status='Reprocessing requested. Queued for processing...'
     )
-    current_app.db.session.add(job)
-    current_app.db.session.commit()
-    
-    # Generate URLs with request context
-    from flask import url_for
-    urls = {
-        'reprocess': url_for('main.reprocess_recipe', recipe_id=0, _external=False),
-        'delete': url_for('main.delete_recipe', recipe_id=0, _external=False)
-    }
+
+    db.session.add(job)
+    db.session.commit()
     
     # Start Celery task - will update the original recipe
-    transcribe_recipe_task.apply_async(
-        args=[job.id, recipe.image_path, urls, recipe_id],
-        task_id=job.task_id
+    reprocess_transcribe_recipe_task.apply_async(
+        args=[external_recipe_id, job.job_id, recipe.image_path, url_for('webhooks.update_status', _external=True), url_for('webhooks.record_recipe', _external=True)],
     )
-    
-    # Return processing status with SSE listener (maintain recipe ID for stable DOM)
-    return render_template('components/job_processing.html', job=job, recipe_id=recipe_id)
 
+    # Targeting the existing recipe card for replacement, not the new one because it doesn't
+    # exist yet.    
+    turbo.push(turbo.replace(render_template('components/job_status.html', job=job), target=f'receipt-{external_recipe_id}'))
+    
+    return '', 200
 
 @bp.route('/recipes/<int:recipe_id>')
 def recipe_detail(recipe_id):

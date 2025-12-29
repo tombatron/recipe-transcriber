@@ -18,7 +18,7 @@ class Recipe(db.Model):
     __tablename__ = 'recipes'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[str] = mapped_column(ForeignKey('transcription_jobs.job_id'))
+    job_id: Mapped[str] = mapped_column(ForeignKey('transcription_jobs.job_id')) # TODO: Change this to be `external_recipe_id`
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     prep_time: Mapped[Optional[str]] = mapped_column(String(50), default=None)
     cook_time: Mapped[Optional[str]] = mapped_column(String(50), default=None)
@@ -124,7 +124,7 @@ class TranscriptionJob(db.Model):
     __tablename__ = 'transcription_jobs'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    job_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False) # TODO: Rename to external_recipe_id
     session_id: Mapped[str] = mapped_column(String(100), nullable=False)
     image_path: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(
