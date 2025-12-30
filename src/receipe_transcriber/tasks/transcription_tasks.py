@@ -1,7 +1,6 @@
 import os
 import logging
 import requests
-from time import sleep
 from receipe_transcriber.celery_app import celery
 from receipe_transcriber.services.ollama_service import ollama_service
 
@@ -45,7 +44,45 @@ def publish_status(job_id, status, message, status_update_hook):
         'message': message,
     })
 
-# TODO: Consolidate all of the dupe logic here... as much as possible. 
+def transcribe_recipe(external_recipe_id, image_path, status_update_hook):
+    publish_status(external_recipe_id, 'processing', 'Starting transcription...', status_update_hook)
+
+    recipe_data = get_recipe_data(image_path)
+
+    publish_status(external_recipe_id, 'processing', 'Parsing response from model...', status_update_hook)    
+
+    # Extract data from processed recipe image.
+    cook_time = recipe_data.get('cook_time')
+
+    if isinstance(cook_time, list):
+        cook_time = ', '.join(str(t) for t in cook_time if t)
+    
+    notes = recipe_data.get('notes')
+
+    if isinstance(notes, list):
+        notes = '\n'.join(str(n) for n in notes if n)
+    
+    servings = recipe_data.get('servings')
+
+    if servings and not isinstance(servings, str):
+        servings = str(servings)
+
+    title = recipe_data.get('title', 'Untitled Recipe')
+    prep_time = recipe_data.get('prep_time')
+    instructions = recipe_data.get('instructions', [])
+    ingredients = recipe_data.get('ingredients', [])  
+
+    return {
+        'external_recipe_id': external_recipe_id,
+        'image_path': image_path,
+        'title': title,
+        'prep_time': prep_time,
+        'cook_time': cook_time,
+        'servings': servings,
+        'ingredients': ingredients,
+        'instructions': instructions,
+        'notes': notes
+    } 
 
 @celery.task(bind=True)
 def transcribe_recipe_task(self, job_id, image_path, status_update_hook, processing_complete_hook):
@@ -61,97 +98,26 @@ def transcribe_recipe_task(self, job_id, image_path, status_update_hook, process
     """
     logger.info(f"Job {job_id}: Starting transcription.")
 
-    publish_status(job_id, 'processing', 'Starting transcription...', status_update_hook)
-
-    if os.getenv('SKIP_OLLAMA') == '1':
-        sleep(2)
-
-    recipe_data = get_recipe_data(image_path)
-
-    if os.getenv('SKIP_OLLAMA') == '1':
-        sleep(2)
-
-    publish_status(job_id, 'processing', 'Parsing response from model...', status_update_hook)
+    transcribed_recipe = transcribe_recipe(job_id, image_path, status_update_hook)
     
-    # Handle lists in recipe_data
-    cook_time = recipe_data.get('cook_time')
-
-    if isinstance(cook_time, list):
-        cook_time = ', '.join(str(t) for t in cook_time if t)
-    
-    notes = recipe_data.get('notes')
-
-    if isinstance(notes, list):
-        notes = '\n'.join(str(n) for n in notes if n)
-    
-    servings = recipe_data.get('servings')
-
-    if servings and not isinstance(servings, str):
-        servings = str(servings)
-
-    title = recipe_data.get('title', 'Untitled Recipe')
-    prep_time = recipe_data.get('prep_time')
-    instructions = recipe_data.get('instructions', [])
-    ingredients = recipe_data.get('ingredients', [])
-
-    requests.post(processing_complete_hook, json={
-        'external_recipe_id': job_id,
-        'image_path': image_path,
-        'title': title,
-        'prep_time': prep_time,
-        'cook_time': cook_time,
-        'servings': servings,
-        'ingredients': ingredients,
-        'instructions': instructions,
-        'notes': notes
-    })
+    requests.post(processing_complete_hook, json=transcribed_recipe)
 
 @celery.task(bind=True)
 def reprocess_transcribe_recipe_task(self, external_recipe_id, new_external_recipe_id, image_path, status_update_hook, processing_complete_hook):
-    #logger.info(f"Job {job_id}: Starting transcription.")
-
-    publish_status(external_recipe_id, 'processing', 'Starting transcription...', status_update_hook)
-
-    if os.getenv('SKIP_OLLAMA') == '1':
-        sleep(2)
-
-    recipe_data = get_recipe_data(image_path)
-
-    if os.getenv('SKIP_OLLAMA') == '1':
-        sleep(2)
-
-    publish_status(external_recipe_id, 'processing', 'Parsing response from model...', status_update_hook)
+    """
+    TODO: Complete doc string here.
     
-    # Handle lists in recipe_data
-    cook_time = recipe_data.get('cook_time')
+    :param self: Description
+    :param external_recipe_id: Description
+    :param new_external_recipe_id: Description
+    :param image_path: Description
+    :param status_update_hook: Description
+    :param processing_complete_hook: Description
+    """
+    logger.info(f"Reprocess job for external recipe ID {external_recipe_id}: Starting transcription.")
 
-    if isinstance(cook_time, list):
-        cook_time = ', '.join(str(t) for t in cook_time if t)
-    
-    notes = recipe_data.get('notes')
+    transcribed_recipe = transcribe_recipe(external_recipe_id, image_path, status_update_hook)
+    transcribed_recipe['new_external_recipe_id'] = new_external_recipe_id
 
-    if isinstance(notes, list):
-        notes = '\n'.join(str(n) for n in notes if n)
-    
-    servings = recipe_data.get('servings')
-
-    if servings and not isinstance(servings, str):
-        servings = str(servings)
-
-    title = recipe_data.get('title', 'Untitled Recipe')
-    prep_time = recipe_data.get('prep_time')
-    instructions = recipe_data.get('instructions', [])
-    ingredients = recipe_data.get('ingredients', [])
-
-    requests.post(processing_complete_hook, json={
-        'external_recipe_id': external_recipe_id,
-        'new_external_recipe_id': new_external_recipe_id, # We send this because we're going to replace the existing recipe with this one.
-        'image_path': image_path,
-        'title': title,
-        'prep_time': prep_time,
-        'cook_time': cook_time,
-        'servings': servings,
-        'ingredients': ingredients,
-        'instructions': instructions,
-        'notes': notes
-    })    
+    requests.post(processing_complete_hook, json=transcribed_recipe)   
+ 
