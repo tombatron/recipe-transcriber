@@ -26,9 +26,16 @@ def index():
 
 @bp.route('/recipes')
 def recipes():
-    recent_recipes = current_app.db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(10).all()
+    active_transcription_jobs = (db.session
+        .query(TranscriptionJob)
+        .filter(TranscriptionJob.completed_at == None)  # noqa: E711
+        .order_by(TranscriptionJob.created_at.desc())
+        .all()
+    )
+
+    recent_recipes = db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(50).all()
     
-    return render_template('components/recent_recipes.html', recent_recipes=recent_recipes)
+    return render_template('components/recent_recipes.html', recent_recipes=recent_recipes, active_transcription_jobs=active_transcription_jobs)
 
 @bp.route('/upload', methods=['POST'])
 def upload_image():

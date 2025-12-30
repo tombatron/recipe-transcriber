@@ -1,4 +1,9 @@
 <turbo-frame id="results-area" class="space-y-6">
+{% if active_transcription_jobs %}
+  {% for job in active_transcription_jobs %}
+    {% include 'components/job_status.html' %}
+  {% endfor %}
+{% endif %} 
 {% if recent_recipes %}
       {% for recipe in recent_recipes %}
         {% set job = job_map.get(recipe.id) if job_map is defined else None %}

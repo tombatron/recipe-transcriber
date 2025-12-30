@@ -67,7 +67,7 @@ def record_recipe():
     job = db.session.query(TranscriptionJob).filter_by(job_id = new_external_recipe_id or external_recipe_id).one_or_none()
 
     if job is not None:
-        job.last_status = 'completed' 
+        job.status = 'completed' 
         job.completed_at = datetime.now(timezone.utc)
 
     db.session.commit()
