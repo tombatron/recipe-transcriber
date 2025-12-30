@@ -1,10 +1,8 @@
 import os
 import uuid
 from pathlib import Path
-from flask import Blueprint, render_template, request, current_app, session, redirect, flash
+from flask import Blueprint, render_template, request, current_app, session, redirect, flash, url_for
 from werkzeug.utils import secure_filename
-from flask import url_for
-# from receipe_transcriber import db,
 from receipe_transcriber.models import TranscriptionJob, Recipe
 from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task, reprocess_transcribe_recipe_task
 from .. import turbo, db
@@ -52,15 +50,13 @@ def upload_image():
     files = request.files.getlist('images')
     
     if not files or not any(f.filename for f in files):
-        return '<div class="text-red-600">No files provided</div>', 400
+        flash(render_template('components/no_valid_files.html'))
     
     # Ensure session has a session_id
     if 'session_id' not in session:
         session['session_id'] = str(uuid.uuid4())
     
     session_id = session['session_id']
-
-    #processed_files = 0
     
     for file in files:
         if not file or not file.filename:
@@ -92,11 +88,6 @@ def upload_image():
         transcribe_recipe_task.apply_async(
             args=[job.job_id, str(filepath), url_for('webhooks.update_status', _external=True), url_for('webhooks.record_recipe', _external=True)]
         )
-        
-        # Render pending job card using Turbo.
-        # turbo.push(turbo.prepend(render_template('components/job_status.html', job=job), target='results-area'))
-        #send_results_area_update(turbo.prepend(render_template('components/job_status.html', job=job), target='results-area'))
-        #processed_files += 1
     
     return redirect(url_for('main.index'))
 
