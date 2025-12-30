@@ -1,10 +1,10 @@
 import os
 import uuid
 from pathlib import Path
-from flask import Blueprint, render_template, request, current_app, session, Response
+from flask import Blueprint, render_template, request, current_app, session, redirect, flash
 from werkzeug.utils import secure_filename
 from flask import url_for
-from receipe_transcriber import db
+# from receipe_transcriber import db,
 from receipe_transcriber.models import TranscriptionJob, Recipe
 from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task, reprocess_transcribe_recipe_task
 from .. import turbo, db
@@ -14,6 +14,15 @@ bp = Blueprint('main', __name__)
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in current_app.config['ALLOWED_EXTENSIONS']
+
+def send_results_area_update(turbo_action):
+    # TODO: Cache this with Redis.
+    recipe_count = db.session.query(Recipe).count()
+
+    if recipe_count <=5:
+        turbo.push(turbo.replace(recipes(), target='results-area'))
+    else:
+        turbo.push(turbo_action)
 
 @bp.route('/')
 def index():
@@ -51,16 +60,14 @@ def upload_image():
     
     session_id = session['session_id']
 
-    processed_files = 0
-
-    turbo_operations = []
+    #processed_files = 0
     
     for file in files:
         if not file or not file.filename:
             continue
             
         if not allowed_file(file.filename):
-            turbo.push(turbo.prepend(render_template('components/invalid_file_type.html', filename=file.filename), target='results-area'))
+            flash(render_template('components/invalid_file_type.html', filename=file.filename))
             continue
         
         # Save uploaded file
@@ -78,9 +85,8 @@ def upload_image():
             last_status='Upload received. Queued for processing...'
         )
 
-        # TODO: Fix how we're interacting with the DB here. 
-        current_app.db.session.add(job)
-        current_app.db.session.commit()
+        db.session.add(job)
+        db.session.commit()
         
         # Start Celery task with URLs
         transcribe_recipe_task.apply_async(
@@ -89,14 +95,10 @@ def upload_image():
         
         # Render pending job card using Turbo.
         # turbo.push(turbo.prepend(render_template('components/job_status.html', job=job), target='results-area'))
-        turbo_operations.append(turbo.prepend(render_template('components/job_status.html', job=job), target='results-area'))
-        processed_files += 1
+        #send_results_area_update(turbo.prepend(render_template('components/job_status.html', job=job), target='results-area'))
+        #processed_files += 1
     
-    # if not processed_files:
-    #     return render_template('components/no_valid_files.html'), 400
-    
-    # TODO: Need to handle the case where the websocket isn't available.
-    return Response(turbo.push(turbo_operations), mimetype='text/vnd.turbo-stream.html')
+    return redirect(url_for('main.index'))
 
 @bp.route('/recipes/<string:external_recipe_id>/delete', methods=['DELETE'])
 def delete_recipe(external_recipe_id):
@@ -112,7 +114,7 @@ def delete_recipe(external_recipe_id):
         db.session.delete(recipe)
         db.session.commit()
 
-        turbo.push(turbo.remove(target=f'recipe-{recipe.job_id}'))
+        send_results_area_update(turbo.remove(target=f'recipe-{recipe.job_id}'))
     
     return '', 200 #Response(turbo.push(turbo.remove(target=f'recipe-{recipe.job_id}')), mimetype='text/vnd.turbo-stream.html')
 
@@ -152,7 +154,7 @@ def reprocess_recipe(external_recipe_id):
 
     # Targeting the existing recipe card for replacement, not the new one because it doesn't
     # exist yet.    
-    turbo.push(turbo.replace(render_template('components/job_status.html', job=job), target=f'receipt-{external_recipe_id}'))
+    send_results_area_update(turbo.replace(render_template('components/job_status.html', job=job), target=f'receipt-{external_recipe_id}'))
     
     return '', 200
 

@@ -1,4 +1,11 @@
 <turbo-frame id="results-area" class="space-y-6">
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+      {% for message in messages %}
+        {{ message|safe }}
+      {% endfor %}
+  {% endif %}
+{% endwith%}
 {% if active_transcription_jobs %}
   {% for job in active_transcription_jobs %}
     {% include 'components/job_status.html' %}

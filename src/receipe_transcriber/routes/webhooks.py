@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from flask import Blueprint, request, render_template
 from .. import turbo
+from .main import send_results_area_update
 from ..models import db, TranscriptionJob, Recipe, Ingredient, Instruction
 
 bp = Blueprint('webhooks', __name__)
@@ -17,7 +18,7 @@ def update_status():
     job.status = status # type: ignore
     db.session.commit()
     
-    turbo.push(turbo.replace(render_template('components/job_processing.html', job_id=job_id, message=message), target=f'recipe-{job_id}'))
+    send_results_area_update(turbo.replace(render_template('components/job_processing.html', job_id=job_id, message=message), target=f'recipe-{job_id}'))
 
     return '', 200
 
@@ -74,6 +75,6 @@ def record_recipe():
 
     # At this point we're always targeting the existing `external_recipe_id`, if we're replacing that, the `new_recipe` should
     # have the new ID we're concerned about.
-    turbo.push(turbo.replace(render_template('components/recipe_card.html', recipe=new_recipe), target=f'recipe-{external_recipe_id}'))
+    send_results_area_update(turbo.replace(render_template('components/recipe_card.html', recipe=new_recipe), target=f'recipe-{external_recipe_id}'))
 
     return '', 200
