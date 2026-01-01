@@ -37,14 +37,15 @@ def get_recipe_data(image_path):
     # Real Ollama call
     return ollama_service.transcribe_recipe(image_path)
 
-def publish_status(job_id, status, message, status_update_hook):
+def publish_status(external_recipe_id, status, message, status_update_hook):
     requests.post(status_update_hook, data={
-        'job_id': job_id,
+        'external_recipe_id': external_recipe_id,
         'status': status,
         'message': message,
     })
 
-def transcribe_recipe(external_recipe_id, image_path, status_update_hook):
+@celery.task(bind=True)
+def transcribe_recipe_task(_, image_path, status_update_hook, processing_complete_hook, external_recipe_id, new_external_recipe_id=None):
     publish_status(external_recipe_id, 'processing', 'Starting transcription...', status_update_hook)
 
     recipe_data = get_recipe_data(image_path)
@@ -72,8 +73,9 @@ def transcribe_recipe(external_recipe_id, image_path, status_update_hook):
     instructions = recipe_data.get('instructions', [])
     ingredients = recipe_data.get('ingredients', [])  
 
-    return {
+    transcribed_recipe = {
         'external_recipe_id': external_recipe_id,
+        'new_external_recipe_id': new_external_recipe_id,
         'image_path': image_path,
         'title': title,
         'prep_time': prep_time,
@@ -84,40 +86,5 @@ def transcribe_recipe(external_recipe_id, image_path, status_update_hook):
         'notes': notes
     } 
 
-@celery.task(bind=True)
-def transcribe_recipe_task(self, job_id, image_path, status_update_hook, processing_complete_hook):
-    """
-    Transcribe recipe from image using Ollama.
-    Publishes updates via Server-Sent Events (SSE) to Redis.
-    
-    Args:
-        job_id: Database ID of the TranscriptionJob
-        image_path: Path to the uploaded image
-        urls: Dict with 'reprocess' and 'delete' URL templates
-        reprocess_recipe_id: If set, this is a reprocess of an existing recipe
-    """
-    logger.info(f"Job {job_id}: Starting transcription.")
-
-    transcribed_recipe = transcribe_recipe(job_id, image_path, status_update_hook)
-    
     requests.post(processing_complete_hook, json=transcribed_recipe)
-
-@celery.task(bind=True)
-def reprocess_transcribe_recipe_task(self, external_recipe_id, new_external_recipe_id, image_path, status_update_hook, processing_complete_hook):
-    """
-    TODO: Complete doc string here.
-    
-    :param self: Description
-    :param external_recipe_id: Description
-    :param new_external_recipe_id: Description
-    :param image_path: Description
-    :param status_update_hook: Description
-    :param processing_complete_hook: Description
-    """
-    logger.info(f"Reprocess job for external recipe ID {external_recipe_id}: Starting transcription.")
-
-    transcribed_recipe = transcribe_recipe(external_recipe_id, image_path, status_update_hook)
-    transcribed_recipe['new_external_recipe_id'] = new_external_recipe_id
-
-    requests.post(processing_complete_hook, json=transcribed_recipe)   
  
