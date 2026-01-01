@@ -13,7 +13,7 @@ bp = Blueprint("webhooks", __name__)
 
 @bp.route("/update-status", methods=["POST"])
 def update_status():
-    external_recipe_id = request.form.get("job_id")
+    external_recipe_id = request.form.get("external_recipe_id")
     status: str | None = request.form.get("status") or None
     message = request.form.get("message")
 
@@ -81,7 +81,7 @@ def record_recipe():
 
     job = (
         db.session.query(TranscriptionJob)
-        .filter_by(job_id=new_external_recipe_id or external_recipe_id)
+        .filter_by(external_recipe_id=new_external_recipe_id or external_recipe_id)
         .one_or_none()
     )
 
