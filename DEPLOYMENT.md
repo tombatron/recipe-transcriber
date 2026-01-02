@@ -4,9 +4,9 @@ This guide covers deploying the Recipe Transcriber app using Docker Compose (v2 
 
 ## Architecture
 
-- **web**: Flask app (Gunicorn with gevent workers for SSE)
+- **web**: Flask app (Gunicorn with gevent workers for WebSocket support)
 - **worker**: Celery worker for async recipe transcription
-- **redis**: Message broker for Celery + pub/sub for SSE
+- **redis**: Message broker for Celery + WebSocket coordination for Turbo Streams
 - **ollama**: Local LLM server with vision models
 
 ## Prerequisites
@@ -298,9 +298,10 @@ curl -I https://your-domain.com
 
 ## Troubleshooting
 
-### SSE Not Working
+### Turbo Streams Not Working
 
-Ensure Traefik isn't buffering responses. The compose file includes buffering middleware, but verify in Traefik logs.
+Ensure Traefik isn't buffering WebSocket connections. The compose file includes buffering middleware, but verify in Traefik logs.
+Check that WebSocket upgrade headers are being passed correctly.
 
 ### Celery Tasks Not Processing
 

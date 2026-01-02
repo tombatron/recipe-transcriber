@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     flask>=3.0.0 \
     flask-sqlalchemy>=3.0.0 \
     flask-migrate>=4.0.0 \
-    flask-sse>=1.0.0 \
+    turbo-flask>=0.8.0 \
     python-dotenv>=1.0.0 \
     celery[redis]>=5.3.0 \
     redis>=5.0.0 \

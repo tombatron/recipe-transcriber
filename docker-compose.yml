@@ -80,9 +80,9 @@ services:
       - "traefik.http.routers.receipe-web.tls=true"
       - "traefik.http.routers.receipe-web.tls.certresolver=route53"
       - "traefik.http.services.receipe-web.loadbalancer.server.port=8000"
-      # SSE-specific settings (disable buffering)
-      - "traefik.http.middlewares.receipe-sse.buffering.retryExpression=IsNetworkError() && Attempts() < 2"
-      - "traefik.http.routers.receipe-web.middlewares=receipe-sse@docker"
+      # WebSocket-specific settings (disable buffering for WebSocket upgrade)
+      - "traefik.http.middlewares.receipe-ws.buffering.retryExpression=IsNetworkError() && Attempts() < 2"
+      - "traefik.http.routers.receipe-web.middlewares=receipe-ws@docker"
     command: >
       sh -c "
       flask db upgrade &&
