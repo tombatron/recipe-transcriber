@@ -8,7 +8,11 @@
 {% endwith%}
 {% if active_transcription_jobs %}
   {% for job in active_transcription_jobs %}
+    {% if job.status == 'pending' %}
     {% include 'components/job_status.html' %}
+    {% else %}
+    {% include 'components/job_processing.html' %}
+    {% endif %}
   {% endfor %}
 {% endif %} 
 {% if recent_recipes %}

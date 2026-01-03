@@ -29,16 +29,14 @@ def allowed_file(filename):
         in current_app.config["ALLOWED_EXTENSIONS"]
     )
 
-
-def send_results_area_update(turbo_action):
+def send_results_area_update(turbo_action, turbo_method = "push"):
     # TODO: Cache this with Redis.
     recipe_count = db.session.query(Recipe).count()
 
     if recipe_count <= 5:
-        turbo.push(turbo.replace(recipes(), target="results-area"))
+        return getattr(turbo, turbo_method)(turbo.replace(recipes(), target="results-area"))
     else:
-        turbo.push(turbo_action)
-
+        return getattr(turbo, turbo_method)(turbo_action)
 
 @bp.route("/")
 def index():
@@ -146,8 +144,9 @@ def delete_recipe(external_recipe_id):
         db.session.commit()
 
         if turbo.can_push:
-            send_results_area_update(
-                turbo.remove(target=f"recipe-{recipe.external_recipe_id}")
+            return send_results_area_update(
+                turbo.remove(target=f"recipe-{recipe.external_recipe_id}"), 
+                "stream"
             )
         else:
             return redirect(url_for("main.index"))

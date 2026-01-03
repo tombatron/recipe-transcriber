@@ -22,7 +22,7 @@ def update_status():
         .filter(TranscriptionJob.external_recipe_id == external_recipe_id)
         .one()
     )
-    job.status = status  # type: ignore
+    job.status = status # type: ignore
     db.session.commit()
 
     send_results_area_update(

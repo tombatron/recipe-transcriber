@@ -1,3 +1,4 @@
+import time
 import os
 import logging
 import requests
@@ -47,7 +48,7 @@ def publish_status(external_recipe_id, status, message, status_update_hook):
 @celery.task(bind=True)
 def transcribe_recipe_task(_, image_path, status_update_hook, processing_complete_hook, external_recipe_id, new_external_recipe_id=None):
     publish_status(external_recipe_id, 'processing', 'Starting transcription...', status_update_hook)
-
+    time.sleep(5)  # Simulate initial processing delay
     recipe_data = get_recipe_data(image_path)
 
     publish_status(external_recipe_id, 'processing', 'Parsing response from model...', status_update_hook)    
