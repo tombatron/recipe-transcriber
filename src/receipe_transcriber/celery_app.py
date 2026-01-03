@@ -1,39 +1,34 @@
-"""
-Isolated Celery app initialization.
-This module initializes Celery independently to avoid circular imports.
-"""
-import os
-from celery import Celery, Task
+"""Lean Celery app initialization (no Flask app context required)."""
 
-# Initialize Celery with Redis broker
+import os
+
+from celery import Celery
+
 celery = Celery(
-    'receipe_transcriber',
-    broker=os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
-    backend=os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
+    "receipe_transcriber",
+    broker=os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"),
+    backend=os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"),
 )
 
-# Default Celery configuration
 celery.conf.update(
-    task_serializer='json',
-    result_serializer='json',
-    accept_content=['json'],
-    timezone='UTC',
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+    timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
 )
 
+# Import tasks to register them; no Flask app context needed
+from receipe_transcriber.tasks import transcription_tasks  # noqa: F401
+
 
 def init_celery(app):
-    """Configure Celery to work with Flask app context."""
-    class FlaskTask(Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-    
+    """Optional override to sync broker/backend from Flask config without binding context."""
     celery.conf.update(
-        broker_url=app.config.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
-        result_backend=app.config.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
+        broker_url=app.config.get("CELERY_BROKER_URL", celery.conf.broker_url),
+        result_backend=app.config.get(
+            "CELERY_RESULT_BACKEND", celery.conf.result_backend
+        ),
     )
-    celery.Task = FlaskTask
-    celery.set_default()
     return celery

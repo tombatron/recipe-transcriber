@@ -1,0 +1,28 @@
+<turbo-frame id="results-area" class="space-y-6">
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+      {% for message in messages %}
+        {{ message|safe }}
+      {% endfor %}
+  {% endif %}
+{% endwith%}
+{% if active_transcription_jobs %}
+  {% for job in active_transcription_jobs %}
+    {% if job.status == 'pending' %}
+    {% include 'components/job_status.html' %}
+    {% else %}
+    {% include 'components/job_processing.html' %}
+    {% endif %}
+  {% endfor %}
+{% endif %} 
+{% if recent_recipes %}
+      {% for recipe in recent_recipes %}
+        {% set job = job_map.get(recipe.id) if job_map is defined else None %}
+        {% include 'components/recipe_card.html' %}
+      {% endfor %}
+    {% else %}
+        <div id="empty-placeholder" class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+        <p class="text-gray-600">No recipes yet. Upload an image to get started!</p>
+        </div>
+{% endif %}    
+</turbo-frame>

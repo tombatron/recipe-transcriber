@@ -8,5 +8,13 @@ module.exports = {
       }
     },
   },
-  plugins: [],
+  plugins: [
+    function({ addBase}) {
+      addBase({
+        'turbo-frame': {
+          '@apply block w-full': {},
+        }
+      })
+    }
+  ],
 }

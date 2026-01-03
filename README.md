@@ -7,17 +7,17 @@ A Flask web application that uses Ollama's vision models to transcribe recipes f
 - 📷 **Camera Capture** - Take photos directly with your device camera
 - 📤 **File Upload** - Upload existing recipe images (PNG, JPG, JPEG, WEBP)
 - 🤖 **AI-Powered** - Uses Ollama vision models for accurate transcription
-- ⚡ **Real-Time Updates** - See processing status updates live via Server-Sent Events
+- ⚡ **Real-Time Updates** - See processing status updates live via Turbo Streams over WebSocket
 - 💾 **Structured Data** - Extracts ingredients, instructions, prep/cook times
-- 🎨 **Modern UI** - Clean interface built with HTMX and Tailwind CSS
+- 🎨 **Modern UI** - Clean interface built with Hotwire Turbo and Tailwind CSS
 
 ## 🏗️ Tech Stack
 
 - **Backend**: Flask, SQLAlchemy, Flask-Migrate
 - **AI/ML**: Ollama (local LLM with vision capabilities)
-- **Task Queue**: Celery with Redis broker
-- **Real-Time Updates**: Flask-SSE with Redis Pub/Sub
-- **Frontend**: HTMX + Server-Sent Events (SSE)
+- **Task Queue**: Celery with Redis broker (standalone worker, no Flask app context)
+- **Real-Time Updates**: Turbo-Flask with WebSocket-based Turbo Streams triggered via webhook callbacks
+- **Frontend**: Hotwire Turbo (Turbo Drive, Turbo Frames, Turbo Streams)
 - **Styling**: Tailwind CSS
 - **Database**: SQLite
 
@@ -90,27 +90,37 @@ celery -A celery_app.celery worker --loglevel=info
 
 **Option 2: Manual Setup**
 
-Open 3 terminals and run:
+Open 4 terminals and run:
 
 ```bash
 # Terminal 1: Redis
 redis-server
 
-# Terminal 2: Celery Worker
+# Terminal 2: Ollama
+ollama serve
+
+# Terminal 3: Celery Worker
 celery -A celery_app.celery worker --loglevel=info
 
-# Terminal 3: Flask + Ollama (in background)
-ollama serve &
+# Terminal 4: Flask
 ./run_dev.sh
 ```
 
-**Option 4: Build Tailwind (Development)**
+**Option 3: Build Tailwind CSS (Required for Development)**
+
+In a separate terminal, watch for CSS changes and auto-rebuild:
+
 ```bash
-# Terminal 4 (optional, only if modifying CSS)
 npx tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
                 -o ./src/receipe_transcriber/static/css/output.css --watch
 ```
-> The app now loads Tailwind from the built CSS (no CDN). Rebuild after changing `input.css`.
+
+> **Important**: Tailwind CSS must be compiled before the app will display properly. The app loads from the built CSS file (not CDN). After installing or modifying `input.css`, rebuild using the command above.
+>
+> If you've already modified CSS and don't see changes:
+> - Make sure the Tailwind watch process is running
+> - Check that `output.css` was updated (check file timestamp)
+> - Refresh your browser (hard refresh: Ctrl+Shift+R)
 
 ### Access the App
 
@@ -120,54 +130,50 @@ Open your browser to: **http://localhost:5000**
 
 ### Architecture Overview
 
-The application uses multiple processes coordinated via Redis:
+The application uses multiple processes coordinated via Redis, webhooks, and WebSocket:
 
 ```
 ┌─────────┐                    ┌─────────────┐
-│ Browser │ ◄──SSE Connection─►│ Flask Server│
-└─────────┘                    └──────┬──────┘
+│ Browser │ ◄─Turbo WebSocket──│ Flask Server│
+└─────────┘                    └──────▲──────┘
                                       │
-                                      │ Queue Task
-                                      ▼
-                               ┌─────────────┐
-                               │    Redis    │
-                               │  (Broker)   │
-                               └──────┬──────┘
+                                      │ HTTP Webhooks
+                                      │ (status updates)
+                               ┌──────┴───────┐      ┌─────────┐
+                               │Celery Worker │─────►│ Ollama  │
+                               │ (standalone) │      └─────────┘
+                               └──────▲───────┘
                                       │
                                       │ Pick Task
-                                      ▼
-                               ┌──────────────┐      ┌─────────┐
-                               │Celery Worker │─────►│ Ollama  │
-                               └──────┬───────┘      └─────────┘
                                       │
-                                      │ Publish Updates
-                                      ▼
-                               ┌─────────────┐
+                               ┌──────┴──────┐
                                │    Redis    │
-                               │  (Pub/Sub)  │
-                               └──────┬──────┘
+                               │  (Broker)   │
+                               └──────▲──────┘
                                       │
-                                      │ SSE Stream
-                                      ▼
-                               ┌─────────────┐
-                               │ Flask Server│────► Browser
+                                      │ Queue Task
+                                      │
+                               ┌──────┴──────┐
+                               │Flask Server │
                                └─────────────┘
 ```
 
 ### Processing Flow
 
 1. **Upload** - User uploads image via camera or file picker
-2. **Queue** - Flask saves image and queues Celery task
+2. **Queue** - Flask saves image and queues Celery task with webhook URLs
 3. **Process** - Celery worker sends image to Ollama (30-120 seconds)
 4. **Extract** - Ollama extracts structured recipe data
-5. **Update** - Worker publishes updates to Redis Pub/Sub
-6. **Stream** - Flask forwards updates to browser via SSE
+5. **Webhook** - Worker sends HTTP POST to Flask webhook routes
+6. **Stream** - Flask routes receive webhook and push Turbo Streams via WebSocket
 7. **Display** - Browser receives and displays recipe in real-time
 
 **Why this architecture?**
-- **No Polling**: Server-Sent Events provide real-time updates
-- **Multi-Process**: Celery workers can run on separate machines
-- **Scalable**: Redis Pub/Sub works across all Flask processes
+- **No Polling**: WebSocket-based Turbo Streams provide instant updates
+- **Decoupled**: Celery workers are standalone processes without Flask app context dependencies
+- **Multi-Process**: Celery workers can run on separate machines (webhooks work across hosts)
+- **Simple Communication**: HTTP webhooks from Celery to Flask are straightforward and reliable
+- **Scalable**: Redis coordinates Celery tasks; turbo-flask handles WebSocket connections
 - **Reliable**: Tasks are persisted in Redis queue
 
 ## 🧪 Project Structure
@@ -185,7 +191,7 @@ receipe-transcriber/
 │   ├── tasks/
 │   │   └── transcription_tasks.py  # Celery tasks
 │   ├── templates/
-│   │   ├── base.html         # Base template with HTMX
+│   │   ├── base.html         # Base template with Turbo
 │   │   ├── index.html        # Main page
 │   │   └── components/       # Reusable components
 │   └── static/
@@ -257,13 +263,13 @@ ollama pull llava:latest
 - Check browser permissions (🔒 icon in address bar)
 - Try a different browser (Chrome/Firefox recommended)
 
-### SSE Not Updating
+### Turbo Streams Not Updating
 
 **Symptom:** Upload succeeds but no real-time updates appear
 
 1. Check browser console for errors (F12)
 2. Verify Redis is running: `redis-cli ping`
-3. Check Flask logs for SSE connection messages
+3. Check Flask logs for WebSocket connection messages
 4. Ensure `REDIS_URL` is correct in .env
 
 ## 🔧 Configuration
@@ -279,7 +285,7 @@ SECRET_KEY=your-secret-key-here
 # Database
 DATABASE_URL=sqlite:///app.db
 
-# Redis (for Celery & SSE)
+# Redis (for Celery & Turbo WebSocket)
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
@@ -315,17 +321,39 @@ flask db downgrade
 pytest tests/
 ```
 
-### Tailwind CSS Development
+### Tailwind CSS Compilation
+
+**Development (Watch Mode)**
+
+Automatically rebuild CSS when you make changes:
 
 ```bash
-# Watch mode (auto-rebuild on changes)
-tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
-            -o ./src/receipe_transcriber/static/css/output.css --watch
-
-# Production build (minified)
-tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
-            -o ./src/receipe_transcriber/static/css/output.css --minify
+npx tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
+                -o ./src/receipe_transcriber/static/css/output.css --watch
 ```
+
+Run this in a separate terminal while developing. The watch process will:
+- Monitor your HTML templates for Tailwind class usage
+- Recompile `output.css` whenever you change files
+- Output will show in the terminal when rebuilds happen
+
+**Production Build (Minified)**
+
+For production deployment, create a minified build:
+
+```bash
+npx tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
+                -o ./src/receipe_transcriber/static/css/output.css --minify
+```
+
+**Troubleshooting Tailwind Issues**
+
+If styles aren't appearing:
+1. Verify `output.css` exists and was recently updated
+2. Check that the Tailwind watch process is running
+3. Hard refresh your browser: `Ctrl+Shift+R` (or `Cmd+Shift+R` on Mac)
+4. Check for errors in the Tailwind CLI terminal output
+5. Ensure class names in HTML match Tailwind conventions (no typos)
 
 ## 📚 Additional Documentation
 
@@ -338,16 +366,16 @@ tailwindcss -i ./src/receipe_transcriber/static/css/input.css \
 This is a learning project demonstrating:
 - Flask web application architecture
 - Async task processing with Celery
-- Real-time updates with Server-Sent Events
+- Real-time updates with Turbo Streams over WebSocket
 - AI integration with Ollama
-- Modern frontend with HTMX
+- Modern frontend with Hotwire Turbo
 
 Feel free to explore, modify, and learn from the code!
 
 ##  Acknowledgments
 
 - **Ollama** - Local LLM inference
-- **HTMX** - HTML-first approach to modern web apps
+- **Hotwire Turbo** - Modern, server-rendered HTML-over-the-wire framework
 - **Flask** - Web framework
 - **Tailwind CSS** - Styling
 - **Claude.ai** - UI design inspiration
@@ -384,11 +412,12 @@ Key configuration options in `.env`:
 
 ## Development
 
-- Frontend uses HTMX for dynamic updates without full page reloads
-- Server-Sent Events (SSE) via flask-sse for real-time status updates
-- Vanilla JavaScript for camera access and file uploads
+- Frontend uses Turbo Drive for dynamic page updates without full page reloads
+- Turbo Frames for decomposed, independent page sections
+- Turbo Streams over WebSocket via turbo-flask for real-time status updates
+- Vanilla JavaScript for camera access
 - Tailwind CSS for styling (Claude.ai-inspired design)
-- Minimal JavaScript - HTMX loaded via local copy
+- Minimal JavaScript - Turbo handles all UI interactions
 
 ## License
 
@@ -398,32 +427,48 @@ MIT
 
 Great question! Here's how the Celery worker (separate process) can update the browser in real-time:
 
-### The Magic: Redis Pub/Sub + Server-Sent Events (SSE)
+### The Magic: Webhooks + Redis-backed WebSocket + Turbo Streams
 
-1. **Browser opens SSE connection** to Flask via HTMX SSE extension (e.g., `/stream?channel=job-123`)
-2. **Celery worker** publishes HTML fragments to a Redis channel via flask-sse
-3. **Flask server** is subscribed to that Redis channel via flask-sse
-4. **Flask forwards** the message to the browser through the open SSE connection
-5. **HTMX receives** the HTML and swaps it into the DOM
+1. **Browser opens WebSocket connection** to Flask via Turbo (automatically established by `{{ turbo() }}`)
+2. **Flask queues Celery task** with webhook URLs (status update and completion endpoints)
+3. **Celery worker processes** the recipe transcription (no Flask app context needed)
+4. **Celery makes HTTP POST requests** (webhooks) to Flask routes with status updates
+5. **Flask webhook routes** receive the data and call `turbo.stream()` to send Turbo Streams
+6. **turbo-flask** uses Redis to coordinate streams between Flask processes
+7. **Flask forwards** the Turbo Stream to the browser through the WebSocket
+8. **Turbo** receives the stream and applies DOM updates (append, replace, update, remove)
 
-**No webhooks or polling needed!** Redis Pub/Sub acts as a message bus between processes.
+**No polling needed!** Webhooks provide loose coupling and Redis-backed WebSocket provides real-time delivery.
 
 ### Why This Works
 
-- **flask-sse** automatically handles Redis Pub/Sub subscriptions
-- When you call `sse.publish(html, type='job-update', channel='job-123')` from Celery, it publishes to Redis
-- Flask (with flask-sse) subscribes to these channels and forwards to connected browsers
-- All communication is real-time using Server-Sent Events
+- **Webhooks**: Celery tasks make standard HTTP requests to Flask routes, enabling complete decoupling and no Flask app context requirement
+- **Turbo Streams**: Flask routes use `turbo.stream()` to broadcast updates to connected browsers
+- **Redis Coordination**: turbo-flask uses Redis to sync WebSocket messages across multiple Flask processes
+- **Real-time**: WebSocket connection provides instant delivery with automatic reconnection
 
 ```python
-# In Celery worker (separate process)
-from flask_sse import sse
+# In Celery worker (standalone, separate process, no Flask context)
+import requests
 
-html = render_template('components/recipe_card.html', recipe=recipe)
-sse.publish(html, type='job-update', channel=f'job-{job_id}')
+# POST to Flask webhook route
+requests.post(status_update_hook, data={
+    'external_recipe_id': recipe_id,
+    'status': 'processing',
+    'message': 'Starting transcription...'
+})
 
-# Flask is listening on 'user-abc123' channel
-# Automatically forwards to browser via SSE
+# Flask route receives webhook and pushes Turbo Stream
+@bp.route('/webhooks/status-update', methods=['POST'])
+def status_update():
+    external_recipe_id = request.form.get('external_recipe_id')
+    message = request.form.get('message')
+    
+    html = render_template('components/job_status.html', 
+                         external_recipe_id=external_recipe_id,
+                         message=message)
+    
+    return turbo.stream(turbo.update(html, target=f'recipe-{external_recipe_id}'))
 ```
 
 For a deep dive, see [ARCHITECTURE.md](ARCHITECTURE.md).

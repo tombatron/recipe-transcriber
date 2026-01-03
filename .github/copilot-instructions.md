@@ -1,16 +1,16 @@
 # GitHub Copilot Instructions - Recipe Transcriber
 
 ## Project Overview
-Python Flask web application for transcribing recipes from images using Ollama (local LLM). Users can capture photos via device camera or upload existing images. The app uses **HTMX for dynamic UI updates** and **Server-Sent Events (SSE) for real-time status updates** from Celery tasks. Tailwind CSS provides styling.
+Python Flask web application for transcribing recipes from images using Ollama (local LLM). Users can capture photos via device camera or upload existing images. The app uses **Hotwire Turbo for dynamic UI updates** and **Turbo Streams over WebSocket** for real-time status updates triggered by webhook callbacks from Celery workers. Tailwind CSS provides styling.
 
 Visual design inspired by Claude.ai's clean, modern aesthetic with focus on simplicity and usability.
 
 ## Tech Stack
 - **Backend Framework**: Flask
 - **AI/ML**: Ollama (local LLM for vision and text processing)
-- **Task Queue**: Celery with Redis broker
-- **Frontend**: HTMX + Server-Sent Events (SSE)
-- **SSE Library**: flask-sse (uses Redis for pub/sub)
+- **Task Queue**: Celery with Redis broker (standalone worker, no Flask app context)
+- **Frontend**: Hotwire Turbo (Turbo Drive, Turbo Frames, Turbo Streams)
+- **Real-time Updates**: Turbo-Flask library (WebSocket-based Turbo Streams) triggered via webhook routes
 - **Styling**: Tailwind CSS
 - **Database**: SQLite with SQLAlchemy ORM
 - **Template Engine**: Jinja2
@@ -31,7 +31,7 @@ receipe-transcriber/
 │       │   ├── __init__.py
 │       │   └── main.py
 │       ├── templates/       # Jinja2 templates
-│       │   ├── base.html    # Base template with HTMX
+│       │   ├── base.html    # Base template with Turbo
 │       │   ├── components/  # Reusable component templates
 │       │   └── layouts/
 │       ├── static/
@@ -57,9 +57,9 @@ receipe-transcriber/
 #### App Factory Pattern
 - Use `create_app()` factory function in `src/receipe_transcriber/__init__.py`
 - Register blueprints for route organization
-- Initialize extensions (SQLAlchemy, Flask-Migrate, Celery, SSE) within factory
-- Configure Celery instance with Flask app context
-- Initialize flask-sse with Redis connection
+- Initialize extensions (SQLAlchemy, Flask-Migrate, Turbo) within factory
+- Celery runs independently from Flask; worker uses settings from `src/receipe_transcriber/celery_app.py` without requiring an app context
+- Initialize Turbo-Flask for WebSocket-based Turbo Streams
 
 #### Database Models
 - Use SQLAlchemy ORM for all database interactions
@@ -69,8 +69,8 @@ receipe-transcriber/
 - Track task states for async operations (pending, processing, completed, failed)
 
 #### Task State Management
-- Store Celery task IDs in database for tracking
-- `TranscriptionJob` model tracks:
+- Store Celery task IDs in database for tracking when persistence is enabled
+- `TranscriptionJob` model can track:
   - Task ID (Celery task UUID)
   - Status (pending, processing, completed, failed)
   - Input (uploaded image reference)
@@ -78,277 +78,278 @@ receipe-transcriber/
   - Error messages if failed
   - Timestamps (created, started, completed)
 
-### HTMX Integration
+### Hotwire Turbo Integration
 
 #### Core Concepts
-- HTMX allows HTML to make HTTP requests from any element
-- Server responds with HTML fragments that replace/update parts of the page
-- No need for complex JavaScript frameworks
-- Progressive enhancement - works without JS
+Turbo is a collection of JavaScript libraries that enable modern, fast web applications using server-rendered HTML:
 
-#### Basic HTMX Attributes
+1. **Turbo Drive** - Intercepts link clicks and form submissions, replacing only the `<body>` content without full page reloads
+2. **Turbo Frames** - Decompose pages into independent contexts that can be lazy-loaded and updated independently
+3. **Turbo Streams** - Deliver page changes as a stream of updates over WebSocket, SSE, or in response to form submissions
+
+#### Turbo Drive
+Automatically accelerates links and form submissions by fetching and swapping only the body content:
+
 ```html
-<!-- Simple form that swaps response into target -->
-<form hx-post="/upload" 
-      hx-target="#results-area" 
-      hx-swap="innerHTML"
-      hx-encoding="multipart/form-data">
-  <input type="file" name="image">
-  <button type="submit">Upload</button>
-</form>
+<!-- Automatic - no attributes needed -->
+<a href="/recipes">View Recipes</a>
 
-<!-- Link that replaces itself -->
-<button hx-delete="/recipes/42" 
-        hx-target="closest .recipe-card"
-        hx-swap="outerHTML"
-        hx-confirm="Are you sure?">
-  Delete
-</button>
-
-<!-- Poll for updates -->
-<div hx-get="/job-status/42" 
-     hx-trigger="every 2s"
-     hx-swap="outerHTML">
-  Processing...
-</div>
+<!-- Disable for specific links -->
+<a href="/download.pdf" data-turbo="false">Download PDF</a>
 ```
 
-#### HTMX Swap Strategies
-- `innerHTML` - Replace inner content of target
-- `outerHTML` - Replace target element entirely
-- `beforebegin` - Insert before target
-- `afterbegin` - Insert at start of target (prepend)
-- `beforeend` - Insert at end of target (append)
-- `afterend` - Insert after target
-- `delete` - Remove target element
-- `none` - Don't swap, just trigger events
+#### Turbo Frames
+Decompose pages into independent contexts:
 
-#### HTMX Events
-```javascript
-// Listen for HTMX events
-document.body.addEventListener('htmx:afterSwap', (event) => {
-  console.log('Content swapped:', event.detail.target)
-})
-
-// Trigger custom behavior on success
-document.body.addEventListener('htmx:afterRequest', (event) => {
-  if (event.detail.successful) {
-    // Show success message
-  }
-})
-```
-
-### Server-Sent Events (SSE) Integration
-
-#### SSE Concepts
-- One-way server-to-client communication
-- Client opens long-lived HTTP connection
-- Server pushes updates as they occur
-- Automatic reconnection on disconnect
-- Perfect for real-time status updates
-
-#### Flask-SSE Setup
-```python
-from flask import Flask
-from flask_sse import sse
-
-app = Flask(__name__)
-app.config['REDIS_URL'] = 'redis://localhost:6379/0'
-app.register_blueprint(sse, url_prefix='/stream')
-```
-
-#### Publishing Events from Python
-```python
-from flask_sse import sse
-
-# In Celery task or webhook
-sse.publish(
-    {
-        "status": "processing",
-        "job_id": 42,
-        "message": "Processing recipe..."
-    },
-    type='job-update',
-    channel='job-42'
-)
-
-# Multiple clients can subscribe to same channel
-sse.publish(
-    {"recipe_id": 123, "html": "<div>...</div>"},
-    type='recipe-complete',
-    channel='recipes'
-)
-```
-
-#### Consuming SSE in Frontend
 ```html
-<!-- Using htmx-sse extension -->
-<div hx-ext="sse" 
-     sse-connect="/stream?channel=job-42"
-     sse-swap="job-update">
-  <div>Waiting for updates...</div>
+<!-- Frame definition -->
+<turbo-frame id="results-area">
+  <div>Initial content</div>
+</turbo-frame>
+
+<!-- Clicking this link loads content into the frame -->
+<turbo-frame id="results-area">
+  <a href="/recipes">Load Recipes</a>
+</turbo-frame>
+
+<!-- Lazy loading -->
+<turbo-frame id="recipe-123" src="/recipes/123">
+  <p>Loading...</p>
+</turbo-frame>
+
+<!-- Form submission scoped to frame -->
+<turbo-frame id="upload-form">
+  <form action="/upload" method="post">
+    <input type="file" name="image">
+    <button>Upload</button>
+  </form>
+</turbo-frame>
+```
+
+**Frame Rules:**
+- Responses must contain matching `<turbo-frame id="...">` 
+- Content within matching frame replaces the existing frame
+- Links and forms within frames target their own frame by default
+- Use `data-turbo-frame="_top"` to break out and replace entire page
+
+#### Turbo Streams
+Enable multiplexed page updates over WebSocket or in response to form submissions:
+
+**Stream Actions:**
+- `append` - Add content to end of target
+- `prepend` - Add content to start of target
+- `replace` - Replace entire target element
+- `update` - Replace content inside target
+- `remove` - Delete target element
+- `before` - Insert content before target
+- `after` - Insert content after target
+
+**WebSocket Streams (Real-time Updates):**
+
+Python (Backend):
+```python
+from turbo_flask import Turbo
+
+# Initialize in app factory
+turbo = Turbo()
+turbo.init_app(app)
+
+# In Flask webhook route that receives Celery callbacks
+@bp.route('/webhooks/recipe-updates', methods=['POST'])
+def recipe_updates():
+    payload = request.get_json() or {}
+    external_id = payload.get('external_recipe_id')
+    status_html = render_template('components/job_status.html', payload=payload)
+    return turbo.stream(turbo.update(status_html, target=f"recipe-{external_id}"))
+```
+
+HTML (Frontend):
+```html
+<!-- Include Turbo helper in base template -->
+{{ turbo() }}
+
+<!-- Elements with IDs can be targeted -->
+<div id="results-area">
+  <!-- Updates appear here -->
 </div>
 
-<!-- Or vanilla JavaScript -->
-<script>
-const eventSource = new EventSource('/stream?channel=job-42')
-
-eventSource.addEventListener('job-update', (event) => {
-  const data = JSON.parse(event.data)
-  // Update UI based on data
-  document.getElementById('status').innerHTML = data.message
-})
-
-eventSource.addEventListener('error', (error) => {
-  console.error('SSE error:', error)
-  eventSource.close()
-})
-</script>
+<turbo-frame id="recipe-123">
+  <!-- Frame can be replaced entirely -->
+</turbo-frame>
 ```
 
-### HTMX + SSE Workflow Pattern
+**Form Response Streams:**
+
+```python
+@app.route('/upload', methods=['POST'])
+def upload():
+    # Process upload
+    job = create_job(file)
+    
+    # Return Turbo Stream response
+    return turbo.stream([
+        turbo.append(
+            render_template('components/job_processing.html', job=job),
+            target="results-area"
+        )
+    ])
+```
+
+### Turbo Workflow Pattern
 
 #### Upload and Process Recipe
+
+**Template Structure:**
 ```html
-<!-- 1. Upload form -->
-<form hx-post="/upload" 
-      hx-target="#results-area" 
-      hx-swap="afterbegin"
-      hx-encoding="multipart/form-data">
-  <input type="file" name="image" accept="image/*">
+<!-- index.html -->
+<form action="/upload" method="post" enctype="multipart/form-data">
+  <input type="file" name="images" multiple>
   <button type="submit">Upload</button>
 </form>
 
-<!-- 2. Results container -->
-<div id="results-area"></div>
+<turbo-frame id="results-area" src="/recipes">
+  Loading recipes...
+</turbo-frame>
 ```
 
-Server responds with:
-```html
-<!-- 3. Pending job card with SSE listener -->
-<div id="job-42" 
-     class="recipe-card"
-     hx-ext="sse"
-     sse-connect="/stream?channel=job-42"
-     sse-swap="job-update"
-     hx-swap="outerHTML">
-  <p>Processing...</p>
-</div>
-```
-
-Celery task publishes updates:
+**Route Handler:**
 ```python
-# 4. Task starts
-sse.publish(
-    {"html": render_template('components/job_processing.html', job_id=42)},
-    type='job-update',
-    channel='job-42'
-)
+@bp.route('/upload', methods=['POST'])
+def upload_image():
+    files = request.files.getlist('images')
+    
+    for file in files:
+        if file and allowed_file(file.filename):
+            # Save file, create job, queue task
+            job = create_job(file)
+            transcribe_recipe_task.delay(job.id)
+    
+    # Redirect back to index - Turbo will handle smoothly
+    return redirect(url_for('main.index'))
+```
 
-# 5. Task completes
-sse.publish(
-    {"html": render_template('components/recipe_card.html', recipe=recipe)},
-    type='job-update',
-    channel='job-42'
-)
+**Celery Task with Webhook Callback:**
+```python
+@celery.task(bind=True)
+def transcribe_recipe_task(self, payload: dict):
+  """Transcribe recipe and notify Flask via webhook."""
+  result = ollama_service.transcribe(payload["image_path"])
+
+  # Post progress/completion back to Flask webhook
+  requests.post(
+    f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+    json={"external_recipe_id": payload["external_recipe_id"], "status": "completed", "result": result},
+    timeout=10,
+  )
+
+  return {"external_recipe_id": payload["external_recipe_id"], "status": "completed"}
+```
+
+**Component Template:**
+```html
+<!-- components/job_processing.html -->
+<turbo-frame id="recipe-{{ external_recipe_id }}" 
+             class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+  <div class="flex items-center space-x-4">
+    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600"></div>
+    <div>
+      <p class="text-lg font-semibold text-gray-900">Processing your recipe...</p>
+    </div>
+  </div>
+</turbo-frame>
+```
+
+```html
+<!-- components/recipe_card.html -->
+<turbo-frame id="recipe-{{ recipe.external_recipe_id }}" 
+             class="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+  <h2>{{ recipe.title }}</h2>
+  <!-- Recipe details -->
+</turbo-frame>
 ```
 
 ### Route Patterns
 
-#### Simple Action Routes
+#### Action Routes with Turbo
 ```python
 @bp.route('/upload', methods=['POST'])
 def upload_image():
-    file = request.files.get('image')
+    files = request.files.getlist('images')
     
-    if file and allowed_file(file.filename):
-        # Save file, create job, start Celery task
-        job = create_job(file)
-        
-        # Return HTML fragment with SSE listener
-        return render_template('components/job_pending.html', job=job)
+    for file in files:
+        if file and allowed_file(file.filename):
+            # Save file, create job, start Celery task
+            job = create_job(file)
+            transcribe_recipe_task.delay(job.id)
     
-    return '<div class="error">Invalid file</div>', 400
+    # Redirect - Turbo handles this smoothly
+    return redirect(url_for('main.index'))
 
 
-@bp.route('/recipes/<int:recipe_id>/delete', methods=['DELETE'])
+@bp.route('/recipes/<int:recipe_id>/delete', methods=['POST'])
 def delete_recipe(recipe_id):
-    recipe = db.session.get(Recipe, recipe_id)
-    if recipe:
-        db.session.delete(recipe)
-        db.session.commit()
+  recipe = db.session.get(Recipe, recipe_id)
+  if recipe:
+    db.session.delete(recipe)
+    db.session.commit()
+        
+    # Use Turbo Stream to remove element
+    return turbo.stream(
+      turbo.remove(target=f"recipe-{recipe.external_recipe_id}")
+    )
     
-    # Return empty response - HTMX will delete the element
-    return '', 200
+  return redirect(url_for('main.index'))
 
 
-@bp.route('/recipes/<int:recipe_id>/reprocess', methods=['POST'])
-def reprocess_recipe(recipe_id):
-    recipe = db.session.get(Recipe, recipe_id)
-    if recipe:
-        job = create_reprocess_job(recipe)
-        # Return processing status with SSE
-        return render_template('components/job_processing.html', job=job)
+@bp.route('/recipes')
+def recipes():
+    """Return all recipes as turbo frame."""
+    recipes = Recipe.query.order_by(Recipe.created_at.desc()).limit(5).all()
+    jobs = TranscriptionJob.query.filter_by(
+        status='processing'
+    ).order_by(TranscriptionJob.created_at.desc()).all()
     
-    return '<div class="error">Recipe not found</div>', 404
-```
-
-#### SSE Endpoint
-```python
-from flask_sse import sse
-
-# SSE blueprint is registered at /stream
-# Clients connect to /stream?channel=<channel-name>
-
-# No additional routes needed - flask-sse handles it
-# Just publish to channels from your code
+    return render_template('components/recent_recipes.html', 
+                         recipes=recipes, jobs=jobs)
 ```
 
 ### Celery Task Queue
 
 #### Celery Configuration
-- Configure Celery in `src/receipe_transcriber/__init__.py`
+- Configure Celery in `src/receipe_transcriber/celery_app.py`
 - Use Redis as message broker and result backend
-- Redis also used for SSE pub/sub
 - Configure task serialization (JSON recommended)
 
-#### Task Pattern with SSE
+#### Task Pattern with Webhook + Turbo Stream
 ```python
-from flask_sse import sse
-from flask import render_template
+import requests
 
 @celery.task(bind=True)
-def transcribe_recipe(self, job_id, image_path):
-    """
-    Transcribe recipe from image using Ollama.
-    Pushes updates via SSE throughout processing.
-    """
-    try:
-        # Update status to processing
-        with app.app_context():
-            job = db.session.get(TranscriptionJob, job_id)
-            job.status = 'processing'
-            db.session.commit()
-            
-            html = render_template('components/job_processing.html', job=job)
-            sse.publish({'html': html}, type='job-update', channel=f'job-{job_id}')
-        
-        # Call Ollama service
-        result = ollama_service.transcribe(image_path)
-        
-        # Push completed result
-        with app.app_context():
-            recipe = create_recipe(result)
-            html = render_template('components/recipe_card.html', recipe=recipe)
-            sse.publish({'html': html}, type='job-update', channel=f'job-{job_id}')
-        
-        return result
-    except Exception as e:
-        # Push error
-        with app.app_context():
-            html = render_template('components/job_error.html', error=str(e))
-            sse.publish({'html': html}, type='job-update', channel=f'job-{job_id}')
-        raise
+def transcribe_recipe(self, payload: dict):
+  """Transcribe recipe from image using Ollama and report via webhook."""
+  try:
+    requests.post(
+      f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+      json={"external_recipe_id": payload["external_recipe_id"], "status": "processing"},
+      timeout=10,
+    )
+
+    result = ollama_service.transcribe(payload["image_path"])
+
+    requests.post(
+      f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+      json={"external_recipe_id": payload["external_recipe_id"], "status": "completed", "result": result},
+      timeout=10,
+    )
+
+    return {"external_recipe_id": payload["external_recipe_id"], "status": "completed"}
+  except Exception as exc:
+    requests.post(
+      f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+      json={"external_recipe_id": payload.get("external_recipe_id"), "status": "failed", "error": str(exc)},
+      timeout=10,
+    )
+    raise
 ```
 
 ### Camera Handling (Vanilla JavaScript)
@@ -442,7 +443,7 @@ theme: {
 
 ### Template Guidelines
 
-#### Base Template with HTMX
+#### Base Template with Turbo
 ```html
 <!DOCTYPE html>
 <html>
@@ -452,11 +453,8 @@ theme: {
   <title>{% block title %}Recipe Transcriber{% endblock %}</title>
   <link href="{{ url_for('static', filename='css/output.css') }}" rel="stylesheet">
   
-  <!-- HTMX Core -->
-  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-  
-  <!-- HTMX SSE Extension -->
-  <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js"></script>
+  <!-- Turbo-Flask helper - includes Turbo and WebSocket connection -->
+  {{ turbo() }}
 </head>
 <body>
   {% block content %}{% endblock %}
@@ -474,7 +472,7 @@ Essential packages:
 - flask
 - flask-sqlalchemy
 - flask-migrate
-- flask-sse
+- turbo-flask (WebSocket-based Turbo Streams)
 - python-dotenv
 - celery[redis]
 - redis
@@ -486,13 +484,13 @@ Essential packages:
 
 #### Development Services
 ```bash
-# 1. Start Redis (required for Celery and SSE)
+# 1. Start Redis (required for Celery and Turbo WebSocket)
 redis-server
 
 # 2. Start Flask app
 flask run
 
-# 3. Start Celery worker
+# 3. Start Celery worker (standalone, no Flask app context required)
 celery -A celery_app.celery worker --loglevel=info
 
 # 4. Build Tailwind CSS (watch mode)
@@ -502,48 +500,41 @@ tailwindcss -i ./src/receipe_transcriber/static/css/input.css -o ./src/receipe_t
 ollama run llava
 ```
 
-## Key Differences from Turbo/Stimulus
+## Key Features of Turbo Implementation
 
-### Before (Turbo + Stimulus)
-- Required WebSocket connection
-- Complex client state management
-- Multiple JavaScript controllers
-- Turbo Frames and Streams concepts
-- Import maps and ES modules
+### Advantages of Turbo
+- **WebSocket-based**: Real-time bidirectional communication for instant updates
+- **No Polling**: Server pushes updates as they happen, no client polling needed
+- **Server-rendered**: All HTML generated on server, minimal client-side JavaScript
+- **Progressive Enhancement**: Works smoothly with standard form submissions
+- **Frames and Streams**: Modular page updates with independent frame contexts
 
-### After (HTMX + SSE)
-- Simple HTTP requests from HTML attributes
-- Server handles all state
-- Minimal JavaScript (only for camera)
-- SSE for real-time updates
-- Single CDN script tag
-
-### Migration Benefits
-- **Simpler**: HTML-first approach, less JavaScript
-- **More Reliable**: No WebSocket multi-process issues
-- **Easier Debugging**: Just HTTP requests visible in DevTools
-- **Better DX**: Write HTML, not JavaScript controllers
-- **Progressive Enhancement**: Works without JavaScript (except camera)
+### Implementation Benefits
+- **Simpler Backend**: Single library (turbo-flask) handles both interactions and real-time updates
+- **Reliable**: WebSocket connection managed by Turbo library with auto-reconnect
+- **Easier Debugging**: Turbo Dev Tools show frame boundaries and stream messages
+- **Better UX**: Smooth page transitions and instant updates without flicker
+- **Type Safety**: Python methods for creating streams (turbo.append, turbo.replace, etc.)
 
 ## Best Practices
 
-### HTMX
-1. Use semantic HTML attributes
-2. Keep responses focused (return just what needs to update)
-3. Use appropriate swap strategies
-4. Leverage HTMX events for custom behavior
-5. Test with network throttling to see loading states
+### Turbo Frames
+1. Use semantic, unique IDs for frames
+2. Keep frame responses focused (return just the frame content)
+3. Use lazy loading (src attribute) for non-critical content
+4. Break out of frames when needed with `data-turbo-frame="_top"`
+5. Test frame boundaries to ensure correct scope
 
-### SSE
-1. Use specific channels per job/user
-2. Close connections when done
-3. Handle reconnection gracefully
-4. Send complete HTML in messages (easier to swap)
-5. Use typed events (type='job-update') for clarity
+### Turbo Streams
+1. Target specific elements with unique IDs
+2. Use appropriate stream actions (append, replace, update, remove)
+3. Keep stream payloads small (send HTML fragments, not full pages)
+4. Handle errors gracefully in tasks before pushing streams
+5. Prefer webhook routes to trigger `turbo.stream(...)` instead of pushing directly from Celery workers
 
 ### General
-1. Return HTML fragments, not JSON
-2. Server renders everything
-3. Minimal client-side JavaScript
-4. Progressive enhancement first
-5. Use HTMX for interactions, SSE for real-time updates
+1. Return HTML fragments from routes, not JSON
+2. Server renders everything - no client-side templating
+3. Minimal client-side JavaScript (only for camera)
+4. Progressive enhancement - forms work without JS
+5. Use Turbo for interactions and real-time updates together
