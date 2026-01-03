@@ -5,9 +5,11 @@ This guide covers deploying the Recipe Transcriber app using Docker Compose (v2 
 ## Architecture
 
 - **web**: Flask app (Gunicorn with gevent workers for WebSocket support)
-- **worker**: Celery worker for async recipe transcription
+- **worker**: Celery worker for async recipe transcription (standalone, no Flask app context)
 - **redis**: Message broker for Celery + WebSocket coordination for Turbo Streams
 - **ollama**: Local LLM server with vision models
+
+The worker communicates with Flask via HTTP webhooks to trigger real-time Turbo Stream updates.
 
 ## Prerequisites
 

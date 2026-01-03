@@ -15,8 +15,8 @@ A Flask web application that uses Ollama's vision models to transcribe recipes f
 
 - **Backend**: Flask, SQLAlchemy, Flask-Migrate
 - **AI/ML**: Ollama (local LLM with vision capabilities)
-- **Task Queue**: Celery with Redis broker
-- **Real-Time Updates**: Turbo-Flask with WebSocket-based Turbo Streams
+- **Task Queue**: Celery with Redis broker (standalone worker, no Flask app context)
+- **Real-Time Updates**: Turbo-Flask with WebSocket-based Turbo Streams triggered via webhook callbacks
 - **Frontend**: Hotwire Turbo (Turbo Drive, Turbo Frames, Turbo Streams)
 - **Styling**: Tailwind CSS
 - **Database**: SQLite
@@ -130,7 +130,7 @@ Open your browser to: **http://localhost:5000**
 
 ### Architecture Overview
 
-The application uses multiple processes coordinated via Redis and webhooks:
+The application uses multiple processes coordinated via Redis, webhooks, and WebSocket:
 
 ```
 ┌─────────┐                    ┌─────────────┐
@@ -141,7 +141,8 @@ The application uses multiple processes coordinated via Redis and webhooks:
                                       │ (status updates)
                                ┌──────┴───────┐      ┌─────────┐
                                │Celery Worker │─────►│ Ollama  │
-                               └──────▲───────┘      └─────────┘
+                               │ (standalone) │      └─────────┘
+                               └──────▲───────┘
                                       │
                                       │ Pick Task
                                       │
@@ -169,8 +170,9 @@ The application uses multiple processes coordinated via Redis and webhooks:
 
 **Why this architecture?**
 - **No Polling**: WebSocket-based Turbo Streams provide instant updates
+- **Decoupled**: Celery workers are standalone processes without Flask app context dependencies
 - **Multi-Process**: Celery workers can run on separate machines (webhooks work across hosts)
-- **Decoupled**: Celery doesn't need direct access to Flask internals, just HTTP endpoints
+- **Simple Communication**: HTTP webhooks from Celery to Flask are straightforward and reliable
 - **Scalable**: Redis coordinates Celery tasks; turbo-flask handles WebSocket connections
 - **Reliable**: Tasks are persisted in Redis queue
 
@@ -429,9 +431,9 @@ Great question! Here's how the Celery worker (separate process) can update the b
 
 1. **Browser opens WebSocket connection** to Flask via Turbo (automatically established by `{{ turbo() }}`)
 2. **Flask queues Celery task** with webhook URLs (status update and completion endpoints)
-3. **Celery worker processes** the recipe transcription
+3. **Celery worker processes** the recipe transcription (no Flask app context needed)
 4. **Celery makes HTTP POST requests** (webhooks) to Flask routes with status updates
-5. **Flask webhook routes** receive the data and call `turbo.push()` to send Turbo Streams
+5. **Flask webhook routes** receive the data and call `turbo.stream()` to send Turbo Streams
 6. **turbo-flask** uses Redis to coordinate streams between Flask processes
 7. **Flask forwards** the Turbo Stream to the browser through the WebSocket
 8. **Turbo** receives the stream and applies DOM updates (append, replace, update, remove)
@@ -440,13 +442,13 @@ Great question! Here's how the Celery worker (separate process) can update the b
 
 ### Why This Works
 
-- **Webhooks**: Celery tasks make standard HTTP requests to Flask routes, enabling complete decoupling
-- **Turbo Streams**: Flask routes use `turbo.push()` to broadcast updates to connected browsers
+- **Webhooks**: Celery tasks make standard HTTP requests to Flask routes, enabling complete decoupling and no Flask app context requirement
+- **Turbo Streams**: Flask routes use `turbo.stream()` to broadcast updates to connected browsers
 - **Redis Coordination**: turbo-flask uses Redis to sync WebSocket messages across multiple Flask processes
 - **Real-time**: WebSocket connection provides instant delivery with automatic reconnection
 
 ```python
-# In Celery worker (separate process)
+# In Celery worker (standalone, separate process, no Flask context)
 import requests
 
 # POST to Flask webhook route
@@ -466,9 +468,7 @@ def status_update():
                          external_recipe_id=external_recipe_id,
                          message=message)
     
-    turbo.push(turbo.update(html, target=f'recipe-{external_recipe_id}'))
-    
-    return '', 204
+    return turbo.stream(turbo.update(html, target=f'recipe-{external_recipe_id}'))
 ```
 
 For a deep dive, see [ARCHITECTURE.md](ARCHITECTURE.md).

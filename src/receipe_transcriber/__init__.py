@@ -31,7 +31,7 @@ def create_app(config_class=Config):
     if not app.config.get("SECRET_KEY"):
         app.config["SECRET_KEY"] = "dev-key-change-in-production"
 
-    # Configure Redis URL for SSE
+    # Configure Redis URL for Turbo Streams / Celery
     if not app.config.get("REDIS_URL"):
         app.config["REDIS_URL"] = "redis://localhost:6379/0"
 

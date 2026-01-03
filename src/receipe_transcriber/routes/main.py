@@ -29,14 +29,18 @@ def allowed_file(filename):
         in current_app.config["ALLOWED_EXTENSIONS"]
     )
 
-def send_results_area_update(turbo_action, turbo_method = "push"):
+
+def send_results_area_update(turbo_action, turbo_method="push"):
     # TODO: Cache this with Redis.
     recipe_count = db.session.query(Recipe).count()
 
     if recipe_count <= 5:
-        return getattr(turbo, turbo_method)(turbo.replace(recipes(), target="results-area"))
+        return getattr(turbo, turbo_method)(
+            turbo.replace(recipes(), target="results-area")
+        )
     else:
         return getattr(turbo, turbo_method)(turbo_action)
+
 
 @bp.route("/")
 def index():
@@ -71,10 +75,12 @@ def recipes():
 @bp.route("/upload", methods=["POST"])
 def upload_image():
     """Handle image upload(s) and start transcription. Returns pending job card(s)."""
-    files = request.files.getlist("images")
+    # Support both 'images' (multi) and legacy 'image'
+    files = request.files.getlist("images") or request.files.getlist("image")
 
     if not files or not any(f.filename for f in files):
         flash(render_template("components/no_valid_files.html"))
+        return redirect(url_for("main.index")), 302
 
     # Ensure session has a session_id
     if "session_id" not in session:
@@ -125,7 +131,7 @@ def upload_image():
     return redirect(url_for("main.index"))
 
 
-@bp.route("/recipes/<string:external_recipe_id>/delete", methods=["DELETE"])
+@bp.route("/recipes/<string:external_recipe_id>/delete", methods=["POST"])
 def delete_recipe(external_recipe_id):
     """Delete a recipe. Turbo will remove the element from DOM."""
     recipe = (
@@ -144,14 +150,11 @@ def delete_recipe(external_recipe_id):
         db.session.commit()
 
         if turbo.can_push:
-            return send_results_area_update(
-                turbo.remove(target=f"recipe-{recipe.external_recipe_id}"), 
-                "stream"
-            )
-        else:
-            return redirect(url_for("main.index"))
+            return send_results_area_update(turbo.remove(target=f"recipe-{recipe.external_recipe_id}"), "stream")
 
-    return "Recipe not found.", 404
+        return redirect(url_for("main.index"))
+
+    return redirect(url_for("main.index"))
 
 
 @bp.route("/recipes/<string:external_recipe_id>/reprocess", methods=["POST"])
@@ -201,7 +204,7 @@ def reprocess_recipe(external_recipe_id):
         send_results_area_update(
             turbo.replace(
                 render_template("components/job_status.html", job=job),
-                target=f"receipt-{external_recipe_id}",
+                target=f"recipe-{external_recipe_id}",
             )
         )
         return "", 200

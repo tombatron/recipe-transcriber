@@ -1,10 +1,3 @@
-from src.receipe_transcriber import create_app
+"""Entry point for Celery worker (lean, no Flask app context)."""
 
-# Create Flask app
-app = create_app()
-
-# Get the configured celery instance
 from src.receipe_transcriber import celery
-
-# Push app context for Celery worker
-app.app_context().push()

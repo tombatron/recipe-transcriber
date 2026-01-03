@@ -1,16 +1,16 @@
 # GitHub Copilot Instructions - Recipe Transcriber
 
 ## Project Overview
-Python Flask web application for transcribing recipes from images using Ollama (local LLM). Users can capture photos via device camera or upload existing images. The app uses **Hotwire Turbo for dynamic UI updates** and **Turbo Streams over WebSocket** for real-time status updates from Celery tasks. Tailwind CSS provides styling.
+Python Flask web application for transcribing recipes from images using Ollama (local LLM). Users can capture photos via device camera or upload existing images. The app uses **Hotwire Turbo for dynamic UI updates** and **Turbo Streams over WebSocket** for real-time status updates triggered by webhook callbacks from Celery workers. Tailwind CSS provides styling.
 
 Visual design inspired by Claude.ai's clean, modern aesthetic with focus on simplicity and usability.
 
 ## Tech Stack
 - **Backend Framework**: Flask
 - **AI/ML**: Ollama (local LLM for vision and text processing)
-- **Task Queue**: Celery with Redis broker
+- **Task Queue**: Celery with Redis broker (standalone worker, no Flask app context)
 - **Frontend**: Hotwire Turbo (Turbo Drive, Turbo Frames, Turbo Streams)
-- **Real-time Updates**: Turbo-Flask library (WebSocket-based Turbo Streams)
+- **Real-time Updates**: Turbo-Flask library (WebSocket-based Turbo Streams) triggered via webhook routes
 - **Styling**: Tailwind CSS
 - **Database**: SQLite with SQLAlchemy ORM
 - **Template Engine**: Jinja2
@@ -57,8 +57,8 @@ receipe-transcriber/
 #### App Factory Pattern
 - Use `create_app()` factory function in `src/receipe_transcriber/__init__.py`
 - Register blueprints for route organization
-- Initialize extensions (SQLAlchemy, Flask-Migrate, Celery, Turbo) within factory
-- Configure Celery instance with Flask app context
+- Initialize extensions (SQLAlchemy, Flask-Migrate, Turbo) within factory
+- Celery runs independently from Flask; worker uses settings from `src/receipe_transcriber/celery_app.py` without requiring an app context
 - Initialize Turbo-Flask for WebSocket-based Turbo Streams
 
 #### Database Models
@@ -69,8 +69,8 @@ receipe-transcriber/
 - Track task states for async operations (pending, processing, completed, failed)
 
 #### Task State Management
-- Store Celery task IDs in database for tracking
-- `TranscriptionJob` model tracks:
+- Store Celery task IDs in database for tracking when persistence is enabled
+- `TranscriptionJob` model can track:
   - Task ID (Celery task UUID)
   - Status (pending, processing, completed, failed)
   - Input (uploaded image reference)
@@ -154,17 +154,13 @@ from turbo_flask import Turbo
 turbo = Turbo()
 turbo.init_app(app)
 
-# In Celery task or route
-turbo.push(turbo.append(
-    rendered_template,
-    target="results-area"
-))
-
-# Multiple actions
-turbo.push([
-    turbo.update(status_html, target="status-123"),
-    turbo.replace(recipe_html, target="recipe-123")
-])
+# In Flask webhook route that receives Celery callbacks
+@bp.route('/webhooks/recipe-updates', methods=['POST'])
+def recipe_updates():
+    payload = request.get_json() or {}
+    external_id = payload.get('external_recipe_id')
+    status_html = render_template('components/job_status.html', payload=payload)
+    return turbo.stream(turbo.update(status_html, target=f"recipe-{external_id}"))
 ```
 
 HTML (Frontend):
@@ -232,35 +228,21 @@ def upload_image():
     return redirect(url_for('main.index'))
 ```
 
-**Celery Task with Turbo Streams:**
+**Celery Task with Webhook Callback:**
 ```python
 @celery.task(bind=True)
-def transcribe_recipe_task(self, job_id):
-    """
-    Transcribe recipe and push updates via Turbo Streams.
-    """
-    with app.app_context():
-        job = db.session.get(TranscriptionJob, job_id)
-        
-        # Push processing status
-        turbo.push(turbo.update(
-            render_template('components/job_processing.html',
-                          external_recipe_id=job.external_recipe_id),
-            target=f"recipe-{job.external_recipe_id}"
-        ))
-        
-        # Call Ollama service
-        result = ollama_service.transcribe(job.image_path)
-        
-        # Save recipe
-        recipe = create_recipe(result, job)
-        
-        # Push completed recipe
-        turbo.push(turbo.replace(
-            render_template('components/recipe_card.html', 
-                          recipe=recipe, job=job),
-            target=f"recipe-{job.external_recipe_id}"
-        ))
+def transcribe_recipe_task(self, payload: dict):
+  """Transcribe recipe and notify Flask via webhook."""
+  result = ollama_service.transcribe(payload["image_path"])
+
+  # Post progress/completion back to Flask webhook
+  requests.post(
+    f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+    json={"external_recipe_id": payload["external_recipe_id"], "status": "completed", "result": result},
+    timeout=10,
+  )
+
+  return {"external_recipe_id": payload["external_recipe_id"], "status": "completed"}
 ```
 
 **Component Template:**
@@ -304,19 +286,19 @@ def upload_image():
     return redirect(url_for('main.index'))
 
 
-@bp.route('/recipes/<int:recipe_id>/delete', methods=['DELETE'])
+@bp.route('/recipes/<int:recipe_id>/delete', methods=['POST'])
 def delete_recipe(recipe_id):
-    recipe = db.session.get(Recipe, recipe_id)
-    if recipe:
-        db.session.delete(recipe)
-        db.session.commit()
+  recipe = db.session.get(Recipe, recipe_id)
+  if recipe:
+    db.session.delete(recipe)
+    db.session.commit()
         
-        # Use Turbo Stream to remove element
-        return turbo.stream(
-            turbo.remove(target=f"recipe-{recipe.external_recipe_id}")
-        )
+    # Use Turbo Stream to remove element
+    return turbo.stream(
+      turbo.remove(target=f"recipe-{recipe.external_recipe_id}")
+    )
     
-    return '', 404
+  return redirect(url_for('main.index'))
 
 
 @bp.route('/recipes')
@@ -334,68 +316,40 @@ def recipes():
 ### Celery Task Queue
 
 #### Celery Configuration
-- Configure Celery in `src/receipe_transcriber/__init__.py`
+- Configure Celery in `src/receipe_transcriber/celery_app.py`
 - Use Redis as message broker and result backend
 - Configure task serialization (JSON recommended)
 
-#### Task Pattern with Turbo Streams
+#### Task Pattern with Webhook + Turbo Stream
 ```python
-from turbo_flask import Turbo
-from flask import render_template
+import requests
 
 @celery.task(bind=True)
-def transcribe_recipe(self, job_id):
-    """
-    Transcribe recipe from image using Ollama.
-    Pushes updates via Turbo Streams throughout processing.
-    """
-    try:
-        # Update status to processing
-        with app.app_context():
-            job = db.session.get(TranscriptionJob, job_id)
-            job.status = 'processing'
-            job.started_at = datetime.utcnow()
-            db.session.commit()
-            
-            # Push processing status via Turbo Stream
-            turbo.push(turbo.update(
-                render_template('components/job_processing.html',
-                              external_recipe_id=job.external_recipe_id),
-                target=f"recipe-{job.external_recipe_id}"
-            ))
-        
-        # Call Ollama service
-        result = ollama_service.transcribe(image_path)
-        
-        # Save recipe and push completed result
-        with app.app_context():
-            recipe = create_recipe(result, job)
-            job.status = 'completed'
-            job.completed_at = datetime.utcnow()
-            db.session.commit()
-            
-            # Push completed recipe card via Turbo Stream
-            turbo.push(turbo.replace(
-                render_template('components/recipe_card.html', 
-                              recipe=recipe, job=job),
-                target=f"recipe-{job.external_recipe_id}"
-            ))
-        
-        return result
-    except Exception as e:
-        # Push error
-        with app.app_context():
-            job.status = 'failed'
-            job.error_message = str(e)
-            db.session.commit()
-            
-            turbo.push(turbo.update(
-                render_template('components/job_error.html',
-                              external_recipe_id=job.external_recipe_id,
-                              error=str(e)),
-                target=f"recipe-{job.external_recipe_id}"
-            ))
-        raise
+def transcribe_recipe(self, payload: dict):
+  """Transcribe recipe from image using Ollama and report via webhook."""
+  try:
+    requests.post(
+      f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+      json={"external_recipe_id": payload["external_recipe_id"], "status": "processing"},
+      timeout=10,
+    )
+
+    result = ollama_service.transcribe(payload["image_path"])
+
+    requests.post(
+      f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+      json={"external_recipe_id": payload["external_recipe_id"], "status": "completed", "result": result},
+      timeout=10,
+    )
+
+    return {"external_recipe_id": payload["external_recipe_id"], "status": "completed"}
+  except Exception as exc:
+    requests.post(
+      f"{settings.FLASK_WEBHOOK_BASE}/webhooks/recipe-updates",
+      json={"external_recipe_id": payload.get("external_recipe_id"), "status": "failed", "error": str(exc)},
+      timeout=10,
+    )
+    raise
 ```
 
 ### Camera Handling (Vanilla JavaScript)
@@ -536,7 +490,7 @@ redis-server
 # 2. Start Flask app
 flask run
 
-# 3. Start Celery worker
+# 3. Start Celery worker (standalone, no Flask app context required)
 celery -A celery_app.celery worker --loglevel=info
 
 # 4. Build Tailwind CSS (watch mode)
@@ -576,7 +530,7 @@ ollama run llava
 2. Use appropriate stream actions (append, replace, update, remove)
 3. Keep stream payloads small (send HTML fragments, not full pages)
 4. Handle errors gracefully in tasks before pushing streams
-5. Use turbo.push() for WebSocket streams from background tasks
+5. Prefer webhook routes to trigger `turbo.stream(...)` instead of pushing directly from Celery workers
 
 ### General
 1. Return HTML fragments from routes, not JSON
