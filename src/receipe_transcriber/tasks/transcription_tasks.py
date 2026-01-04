@@ -1,5 +1,7 @@
 import logging
 import os
+import random
+import time
 
 import requests
 
@@ -61,12 +63,17 @@ def transcribe_recipe_task(
     external_recipe_id,
     new_external_recipe_id=None,
 ):
+    is_mock = os.getenv("SKIP_OLLAMA") == "1"
+    
     publish_status(
         external_recipe_id,
         "processing",
         "Starting transcription...",
         status_update_hook,
     )
+    
+    if is_mock:
+        time.sleep(random.uniform(1, 10))
 
     recipe_data = get_recipe_data(image_path)
 
@@ -76,6 +83,9 @@ def transcribe_recipe_task(
         "Parsing response from model...",
         status_update_hook,
     )
+    
+    if is_mock:
+        time.sleep(random.uniform(1, 10))
 
     # Extract data from processed recipe image.
     cook_time = recipe_data.get("cook_time")
