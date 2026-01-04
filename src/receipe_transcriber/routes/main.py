@@ -34,7 +34,7 @@ def send_results_area_update(turbo_action, turbo_method="push"):
     # TODO: Cache this with Redis.
     recipe_count = db.session.query(Recipe).count()
 
-    if recipe_count <= 5:
+    if recipe_count <= 10:
         return getattr(turbo, turbo_method)(
             turbo.replace(recipes(), target="results-area")
         )
@@ -62,13 +62,24 @@ def recipes():
     )
 
     recent_recipes = (
-        db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(50).all()
+        db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(10).all()
     )
 
     return render_template(
         "components/recent_recipes.html",
         recent_recipes=recent_recipes,
         active_transcription_jobs=active_transcription_jobs,
+    )
+
+
+@bp.route("/recipes-gallery")
+def recipes_gallery():
+    """View all successfully processed recipes."""
+    all_recipes = db.session.query(Recipe).order_by(Recipe.created_at.desc()).all()
+
+    return render_template(
+        "recipes_gallery.html",
+        all_recipes=all_recipes,
     )
 
 
@@ -150,7 +161,9 @@ def delete_recipe(external_recipe_id):
         db.session.commit()
 
         if turbo.can_push:
-            return send_results_area_update(turbo.remove(target=f"recipe-{recipe.external_recipe_id}"), "stream")
+            return send_results_area_update(
+                turbo.remove(target=f"recipe-{recipe.external_recipe_id}"), "stream"
+            )
 
         return redirect(url_for("main.index"))
 
@@ -212,10 +225,14 @@ def reprocess_recipe(external_recipe_id):
         return redirect(url_for("main.index"))
 
 
-@bp.route("/recipes/<int:recipe_id>")
-def recipe_detail(recipe_id):
+@bp.route("/recipes/<string:external_recipe_id>/detail")
+def recipe_detail(external_recipe_id):
     """View a single recipe."""
-    recipe = db.session.get(Recipe, recipe_id)
+    recipe = (
+        db.session.query(Recipe)
+        .filter(Recipe.external_recipe_id == external_recipe_id)
+        .one_or_none()
+    )
 
     if not recipe:
         return "Recipe not found", 404

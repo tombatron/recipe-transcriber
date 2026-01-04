@@ -2,17 +2,18 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 db = SQLAlchemy()
+
 
 class Recipe(db.Model):
     __tablename__ = "recipes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     external_recipe_id: Mapped[str] = mapped_column(
-        ForeignKey("transcription_jobs.external_recipe_id")
+        ForeignKey("transcription_jobs.external_recipe_id"), index=True
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     prep_time: Mapped[Optional[str]] = mapped_column(String(50), default=None)
