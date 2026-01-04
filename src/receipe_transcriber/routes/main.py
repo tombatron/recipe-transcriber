@@ -17,7 +17,7 @@ from werkzeug.utils import secure_filename
 from receipe_transcriber.models import Recipe, TranscriptionJob
 from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task
 
-from .. import db
+from .. import db, turbo
 
 bp = Blueprint("main", __name__)
 
@@ -147,6 +147,9 @@ def delete_recipe(external_recipe_id):
         # Delete from database (cascades to ingredients and instructions)
         db.session.delete(recipe)
         db.session.commit()
+
+        # Refresh entire results area to show remaining recipes
+        return turbo.stream(turbo.replace(recipes(), target="results-area"))
 
     return redirect(url_for("main.index"))
 
