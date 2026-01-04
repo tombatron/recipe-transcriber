@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Recipe Gallery - Recipe Transcriber{% endblock %}
+
+{% block content %}
+{% from 'components/icons.html' import icon %}
+<div class="max-w-4xl mx-auto px-4 py-8">
+  <!-- Header -->
+  <div class="mb-8">
+    <h2 class="text-4xl font-semibold text-gray-900 mb-4">Recipe Gallery</h2>
+    <p class="text-lg text-gray-600 leading-relaxed">
+      Browse all {{ all_recipes|length }} successfully scanned recipes
+    </p>
+  </div>
+
+  <!-- Gallery -->
+  {% if all_recipes %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {% for recipe in all_recipes %}
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+          <!-- Recipe Image -->
+          <div class="aspect-video bg-gradient-to-br from-amber-100 to-amber-50 flex items-center justify-center">
+            {{ icon('image', 'w-12 h-12 text-amber-300') }}
+          </div>
+
+          <!-- Recipe Info -->
+          <div class="p-6">
+            <h3 class="text-xl font-semibold text-gray-900 mb-3 line-clamp-2">{{ recipe.title }}</h3>
+            
+            <!-- Quick Info -->
+            <div class="space-y-2 mb-4">
+              {% if recipe.prep_time %}
+                <div class="flex items-center text-sm text-gray-600">
+                  {{ icon('clock', 'w-4 h-4 mr-2 text-amber-600') }}
+                  Prep: {{ recipe.prep_time }}
+                </div>
+              {% endif %}
+              {% if recipe.cook_time %}
+                <div class="flex items-center text-sm text-gray-600">
+                  {{ icon('flame', 'w-4 h-4 mr-2 text-amber-600') }}
+                  Cook: {{ recipe.cook_time }}
+                </div>
+              {% endif %}
+              {% if recipe.servings %}
+                <div class="flex items-center text-sm text-gray-600">
+                  {{ icon('users', 'w-4 h-4 mr-2 text-amber-600') }}
+                  Servings: {{ recipe.servings }}
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Ingredients Count -->
+            {% if recipe.ingredients %}
+              <div class="text-sm text-gray-600 mb-4">
+                <strong>{{ recipe.ingredients|length }}</strong> ingredient{{ 's' if recipe.ingredients|length != 1 else '' }}
+              </div>
+            {% endif %}
+
+            <!-- View Button -->
+            <a href="{{ url_for('main.recipe_detail', external_recipe_id=recipe.external_recipe_id) }}" 
+               class="block w-full text-center bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+              View Recipe
+            </a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
+      <div class="mb-4">
+        {{ icon('image', 'w-16 h-16 mx-auto text-gray-400') }}
+      </div>
+      <p class="text-gray-600 text-lg">No recipes yet. <a href="{{ url_for('main.index') }}" class="text-amber-600 hover:text-amber-700 font-semibold">Start scanning</a> to build your collection!</p>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
