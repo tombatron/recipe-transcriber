@@ -61,17 +61,24 @@ def transcribe_recipe_task(
     status_update_hook,
     processing_complete_hook,
     external_recipe_id,
-    new_external_recipe_id=None,
+    is_reprocessing=False,
 ):
     is_mock = os.getenv("SKIP_OLLAMA") == "1"
-    
+
+    # Use appropriate status message for initial state
+    initial_message = (
+        "Reprocessing your recipe..."
+        if is_reprocessing
+        else "Starting transcription..."
+    )
+
     publish_status(
         external_recipe_id,
         "processing",
-        "Starting transcription...",
+        initial_message,
         status_update_hook,
     )
-    
+
     if is_mock:
         time.sleep(random.uniform(1, 10))
 
@@ -83,7 +90,7 @@ def transcribe_recipe_task(
         "Parsing response from model...",
         status_update_hook,
     )
-    
+
     if is_mock:
         time.sleep(random.uniform(1, 10))
 
@@ -110,7 +117,6 @@ def transcribe_recipe_task(
 
     transcribed_recipe = {
         "external_recipe_id": external_recipe_id,
-        "new_external_recipe_id": new_external_recipe_id,
         "image_path": image_path,
         "title": title,
         "prep_time": prep_time,

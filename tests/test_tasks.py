@@ -19,13 +19,13 @@ class TasksTestCase(unittest.TestCase):
         with open(image_path, "wb") as f:
             f.write(b"xyz")
 
-        # Call task with correct signature: (image_path, status_hook, complete_hook, ext_id, new_ext_id)
+        # Call task with correct signature: (image_path, status_hook, complete_hook, ext_id, is_reprocessing)
         result = transcribe_recipe_task.run(
             image_path,
             "http://localhost/status",
             "http://localhost/complete",
             "ext-123",
-            None,
+            False,
         )
 
         # Should return structured payload

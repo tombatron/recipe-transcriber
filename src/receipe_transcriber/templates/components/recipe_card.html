@@ -124,7 +124,7 @@
       {{ icon('clipboard', 'w-5 h-5 inline-block mr-2') }}
       Copy for Paprika
     </button>
-    <form class="flex flex-1" action="{{url_for('main.reprocess_recipe', external_recipe_id=recipe.external_recipe_id)}}" method="post">
+    <form class="flex flex-1" action="{{url_for('main.reprocess_recipe', external_recipe_id=recipe.external_recipe_id)}}" method="post" data-turbo-frame="_top">
       <button class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
         {{ icon('refresh', 'w-5 h-5 inline-block mr-2') }}
         Reprocess

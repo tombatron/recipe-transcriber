@@ -17,7 +17,7 @@ from werkzeug.utils import secure_filename
 from receipe_transcriber.models import Recipe, TranscriptionJob
 from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task
 
-from .. import db, turbo
+from .. import db
 
 bp = Blueprint("main", __name__)
 
@@ -28,18 +28,6 @@ def allowed_file(filename):
         and filename.rsplit(".", 1)[1].lower()
         in current_app.config["ALLOWED_EXTENSIONS"]
     )
-
-
-def send_results_area_update(turbo_action, turbo_method="push"):
-    # TODO: Cache this with Redis.
-    recipe_count = db.session.query(Recipe).count()
-
-    if recipe_count <= 10:
-        return getattr(turbo, turbo_method)(
-            turbo.replace(recipes(), target="results-area")
-        )
-    else:
-        return getattr(turbo, turbo_method)(turbo_action)
 
 
 @bp.route("/")
@@ -57,12 +45,12 @@ def recipes():
     active_transcription_jobs = (
         db.session.query(TranscriptionJob)
         .filter(TranscriptionJob.completed_at == None)  # noqa: E711
-        .order_by(TranscriptionJob.created_at.desc())
+        .order_by(TranscriptionJob.created_at.asc())
         .all()
     )
 
     recent_recipes = (
-        db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(10).all()
+        db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(5)
     )
 
     return render_template(
@@ -160,19 +148,12 @@ def delete_recipe(external_recipe_id):
         db.session.delete(recipe)
         db.session.commit()
 
-        if turbo.can_push:
-            return send_results_area_update(
-                turbo.remove(target=f"recipe-{recipe.external_recipe_id}"), "stream"
-            )
-
-        return redirect(url_for("main.index"))
-
     return redirect(url_for("main.index"))
 
 
 @bp.route("/recipes/<string:external_recipe_id>/reprocess", methods=["POST"])
 def reprocess_recipe(external_recipe_id):
-    """Reprocess an existing recipe. Returns processing status."""
+    """Reprocess an existing recipe. Reuses the same transcription job and recipe ID."""
     recipe = (
         db.session.query(Recipe)
         .filter(Recipe.external_recipe_id == external_recipe_id)
@@ -182,47 +163,50 @@ def reprocess_recipe(external_recipe_id):
     if not recipe:
         return "", 404
 
-    # Ensure session has a session_id
-    if "session_id" not in session:
-        session["session_id"] = str(uuid.uuid4())
-
-    session_id = session["session_id"]
-
-    # Create new transcription job with session_id
-    job = TranscriptionJob(
-        external_recipe_id=str(uuid.uuid1()),
-        session_id=session_id,
-        image_path=recipe.image_path,  # type: ignore
-        status="pending",
-        last_status="Reprocessing requested. Queued for processing...",
+    # Get or create transcription job for this recipe
+    job = (
+        db.session.query(TranscriptionJob)
+        .filter_by(external_recipe_id=external_recipe_id)
+        .one_or_none()
     )
 
-    db.session.add(job)
+    if not job:
+        # Ensure session has a session_id
+        if "session_id" not in session:
+            session["session_id"] = str(uuid.uuid4())
+
+        session_id = session["session_id"]
+
+        # Create transcription job
+        job = TranscriptionJob(
+            external_recipe_id=external_recipe_id,
+            session_id=session_id,
+            image_path=recipe.image_path,  # type: ignore
+            status="pending",
+            last_status="Reprocessing requested. Queued for processing...",
+        )
+
+        db.session.add(job)
+    else:
+        # Reset existing job for reprocessing
+        job.status = "pending"
+        job.last_status = "Reprocessing requested. Queued for processing..."
+        job.completed_at = None
+
     db.session.commit()
 
-    # Start Celery task - will update the original recipe
+    # Start Celery task using the same recipe ID
     transcribe_recipe_task.apply_async(
         args=[
             recipe.image_path,
             url_for("webhooks.update_status", _external=True),
             url_for("webhooks.record_recipe", _external=True),
             external_recipe_id,
-            job.external_recipe_id,
         ],
+        kwargs={"is_reprocessing": True},
     )
 
-    if turbo.can_push:
-        # Targeting the existing recipe card for replacement, not the new one because it doesn't
-        # exist yet.
-        send_results_area_update(
-            turbo.replace(
-                render_template("components/job_status.html", job=job),
-                target=f"recipe-{external_recipe_id}",
-            )
-        )
-        return "", 200
-    else:
-        return redirect(url_for("main.index"))
+    return redirect(url_for("main.index"))
 
 
 @bp.route("/recipes/<string:external_recipe_id>/detail")
