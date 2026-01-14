@@ -1,10 +1,25 @@
 {% from 'components/icons.html' import icon %}
-<div id="job-{{ job.id }}" class="bg-white rounded-2xl shadow-sm border border-red-200 p-6">
-  <div class="flex items-start space-x-4">
-    {{ icon('alert', 'w-8 h-8 text-red-500 flex-shrink-0') }}
-    <div>
-      <p class="text-lg font-semibold text-gray-900 mb-2">Transcription Failed</p>
-      <p class="text-gray-600">{{ error }}</p>
+<turbo-frame id="recipe-{{ external_recipe_id }}" 
+  class="bg-white rounded-2xl shadow-sm border border-red-200 p-6">
+  <div class="flex items-start justify-between">
+    <div class="flex items-start space-x-4 flex-1">
+      {{ icon('alert', 'w-8 h-8 text-red-500 flex-shrink-0') }}
+      <div class="flex-1">
+        <p class="text-lg font-semibold text-gray-900 mb-2">Transcription Failed</p>
+        <p class="text-gray-600 mb-3">{{ error }}</p>
+        <div class="flex space-x-2">
+          <form action="{{ url_for('main.reprocess_recipe', external_recipe_id=external_recipe_id) }}" method="post" class="inline">
+            <button type="submit" class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors">
+              Try Again
+            </button>
+          </form>
+          <form action="{{ url_for('main.delete_failed_job', external_recipe_id=external_recipe_id) }}" method="post" class="inline">
+            <button type="submit" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-lg transition-colors">
+              Dismiss
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
-</div>
+</turbo-frame>

@@ -10,6 +10,10 @@
   {% for job in active_transcription_jobs %}
     {% if job.status == 'pending' %}
     {% include 'components/job_status.html' %}
+    {% elif job.status == 'failed' %}
+    {% set error = job.error_message or job.last_status or 'An unknown error occurred' %}
+    {% set external_recipe_id = job.external_recipe_id %}
+    {% include 'components/job_error.html' %}
     {% else %}
     {% include 'components/job_processing.html' %}
     {% endif %}

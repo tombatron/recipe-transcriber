@@ -20,10 +20,22 @@ def update_status():
     job = (
         db.session.query(TranscriptionJob)
         .filter(TranscriptionJob.external_recipe_id == external_recipe_id)
-        .one()
+        .one_or_none()
     )
+
+    if not job:
+        # Job not found - could be a race condition or already deleted
+        # Return 200 to acknowledge webhook (prevent retries) but assume no-op
+        return "", 200
+
     job.status = status  # type: ignore
     job.last_status = message  # type: ignore
+
+    # If status is failed, store error message and mark as completed
+    if status == "failed":
+        job.error_message = message
+        job.completed_at = datetime.now(timezone.utc)
+
     db.session.commit()
 
     turbo.push(turbo.replace(recipes(), target="results-area"))

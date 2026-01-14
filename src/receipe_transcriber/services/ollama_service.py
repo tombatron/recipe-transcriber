@@ -1,76 +1,135 @@
 import json
+import logging
+import os
 import re
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
+
+from ollama import Client, ResponseError
 from pydantic import BaseModel, Field, ValidationError
-from ollama import chat, ResponseError
-from flask import current_app
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 class IngredientSchema(BaseModel):
     """Schema for individual ingredient in recipe."""
-    quantity: Optional[str] = Field(default=None, description="Amount of ingredient (e.g., '2', '1.5')")
-    unit: Optional[str] = Field(default=None, description="Unit of measurement (e.g., 'cups', 'tbsp')")
+
+    quantity: Optional[str] = Field(
+        default=None, description="Amount of ingredient (e.g., '2', '1.5')"
+    )
+    unit: Optional[str] = Field(
+        default=None, description="Unit of measurement (e.g., 'cups', 'tbsp')"
+    )
     item: str = Field(..., description="Name of the ingredient")
 
 
 class RecipeSchema(BaseModel):
     """Schema for structured recipe output from Ollama."""
+
     title: str = Field(..., description="Name of the recipe")
-    ingredients: List[IngredientSchema] = Field(default_factory=list, description="List of ingredients")
-    instructions: List[str] = Field(default_factory=list, description="Step-by-step cooking instructions")
-    prep_time: Optional[str] = Field(default=None, description="Preparation time (e.g., '15 minutes')")
-    cook_time: Optional[str] = Field(default=None, description="Cooking time (e.g., '30 minutes')")
-    servings: Optional[str] = Field(default=None, description="Number of servings (e.g., '4', 'serves 6')")
-    notes: Optional[str] = Field(default=None, description="Additional notes, tips, or variations")
+    ingredients: List[IngredientSchema] = Field(
+        default_factory=list, description="List of ingredients"
+    )
+    instructions: List[str] = Field(
+        default_factory=list, description="Step-by-step cooking instructions"
+    )
+    prep_time: Optional[str] = Field(
+        default=None, description="Preparation time (e.g., '15 minutes')"
+    )
+    cook_time: Optional[str] = Field(
+        default=None, description="Cooking time (e.g., '30 minutes')"
+    )
+    servings: Optional[str] = Field(
+        default=None, description="Number of servings (e.g., '4', 'serves 6')"
+    )
+    notes: Optional[str] = Field(
+        default=None, description="Additional notes, tips, or variations"
+    )
 
 
 class OllamaService:
     """Service for transcribing recipes from images using Ollama vision models.
-    
+
     Uses a two-pass approach for maximum accuracy with handwritten recipes:
     1. First pass: Extract all visible text from the image
     2. Second pass: Structure extracted text into recipe format with schema validation
     """
-    
+
     def __init__(self):
+        self.host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self.client = Client(host=self.host)
         self.model = None
-    
+
     def _get_config(self):
-        """Load configuration from Flask app context."""
+        """Load configuration from environment variables (works in Celery workers)."""
         if not self.model:
-            self.model = current_app.config.get('OLLAMA_MODEL', 'qwen3-vl')
-            self.structure_model = current_app.config.get('STRUCTURE_MODEL') or self.model
-            logger.info(f"[CONFIG] Vision model: {self.model} | Structure model: {self.structure_model}")
-    
-    def transcribe_recipe(self, image_path: str) -> dict:
+            self.model = os.environ.get("OLLAMA_MODEL", "qwen3-vl")
+            self.structure_model = os.environ.get("STRUCTURE_MODEL") or self.model
+            logger.info(
+                f"[CONFIG] Vision model: {self.model} | Structure model: {self.structure_model} | Host: {self.host}"
+            )
+
+    def transcribe_recipe(self, image_path: str, status_callback=None) -> dict:
         """
         Transcribe a recipe from an image using Ollama vision model.
-        
+
         Uses a two-pass approach for maximum accuracy:
         1. First pass: Extract all raw text from the image
         2. Second pass: Structure the text into validated recipe format
-        
+
         Args:
             image_path: Path to the recipe image file
-            
+            status_callback: Optional function to call with status updates (message: str)
+
         Returns:
             Dictionary with keys: title, ingredients, instructions, prep_time, cook_time, servings, notes
-            
+
         Raises:
             Exception: If Ollama service fails or model not found
         """
+        # Skip Ollama and return mock data if in testing mode
+        if os.environ.get("SKIP_OLLAMA") == "1":
+            logger.info("[MOCK MODE] Returning test recipe data")
+            return {
+                "title": "Test Recipe - Mock Data",
+                "prep_time": "15 minutes",
+                "cook_time": "30 minutes",
+                "servings": "4",
+                "notes": "This is mock data for testing. Set SKIP_OLLAMA=0 to use real Ollama.",
+                "ingredients": [
+                    {"quantity": "2", "unit": "cups", "item": "flour"},
+                    {"quantity": "1", "unit": "cup", "item": "sugar"},
+                    {"quantity": "3", "unit": None, "item": "eggs"},
+                ],
+                "instructions": [
+                    "Preheat oven to 350°F",
+                    "Mix dry ingredients together",
+                    "Add wet ingredients and stir",
+                    "Pour into baking pan",
+                    "Bake for 30 minutes until golden",
+                ],
+            }
+
         self._get_config()
-        
+
+        def update_status(message):
+            """Helper to send status updates if callback provided."""
+            if status_callback:
+                status_callback(message)
+            logger.info(message)
+
         try:
             # Verify image file exists
             image_file = Path(image_path)
             if not image_file.exists():
                 raise FileNotFoundError(f"Image file not found: {image_path}")
-            
+
+            # Pre-flight check: ensure Ollama is reachable before doing heavy work
+            if not self.check_connection():
+                raise Exception(
+                    f"Could not connect to Ollama at {self.host}. Is the service running?"
+                )
+
             # FIRST PASS: Extract all visible text with high accuracy
             extraction_prompt = """You are an expert at reading and transcribing text from images, including handwritten and printed text.
 
@@ -89,74 +148,96 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
             logger.info(f"[PASS 1] TEXT EXTRACTION from {Path(image_path).name}")
             logger.info(f"Vision model: {self.model}")
             logger.info(f"Calling Ollama...")
-            
-            response1 = chat(
+
+            update_status("Reading text from image (this may take a minute)...")
+
+            response1 = self.client.chat(
                 model=self.model,
-                messages=[{
-                    'role': 'user',
-                    'content': extraction_prompt,
-                    'images': [str(image_file)]
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": extraction_prompt,
+                        "images": [str(image_file)],
+                    }
+                ],
                 stream=False,
                 options={
-                    'temperature': 0,          # Deterministic output
-                    'top_p': 0.95,             # Reduce hallucination
-                    'top_k': 40,               # Limit token selection
-                    'repeat_penalty': 1.1,    # Prevent repetition
-                    'num_predict': 4096,      # Increase for complex recipes
-                    'num_ctx': 8192,          # Larger context window
-                }
+                    "temperature": 0,  # Deterministic output
+                    "top_p": 0.95,  # Reduce hallucination
+                    "top_k": 40,  # Limit token selection
+                    "repeat_penalty": 1.1,  # Prevent repetition
+                    "num_predict": 4096,  # Increase for complex recipes
+                    "num_ctx": 8192,  # Larger context window
+                },
             )
-            
+
             extracted_text = response1.message.content
-            if not extracted_text and hasattr(response1.message, 'thinking') and response1.message.thinking:
+            if (
+                not extracted_text
+                and hasattr(response1.message, "thinking")
+                and response1.message.thinking
+            ):
                 logger.info("[PASS 1] Using thinking field from model response")
                 extracted_text = response1.message.thinking
-            
-            logger.info(f"[PASS 1] ✓ Extracted {len(extracted_text) if extracted_text else 0} characters")
+
+            logger.info(
+                f"[PASS 1] ✓ Extracted {len(extracted_text) if extracted_text else 0} characters"
+            )
             if extracted_text:
                 logger.info(f"[PASS 1] Preview: {extracted_text[:150]}...")
                 logger.info("[PASS 1] Full extraction follows:\n%s", extracted_text)
-            
+
             if not extracted_text or not extracted_text.strip():
                 logger.error("❌ Empty text extracted from image in first pass")
                 logger.error(f"Full response object: {response1}")
-                raise Exception("Failed to extract text from image - empty response from Ollama")
-            
+                raise Exception(
+                    "Failed to extract text from image - empty response from Ollama"
+                )
+
             # SECOND PASS: Structure the extracted text into recipe format (strict JSON)
             logger.info(f"\n{'='*70}")
             logger.info(f"[PASS 2] RECIPE STRUCTURING to JSON")
             logger.info(f"Structure model: {self.structure_model}")
             logger.info(f"Extracted text: {len(extracted_text)} chars")
             logger.info(f"Calling Ollama for JSON conversion...")
-            
+
+            update_status(f"Text extracted! Now organizing into recipe format...")
+
             result = self._structure_text_to_recipe(extracted_text)
-            
+
             logger.info(f"\n{'='*70}")
             logger.info(f"✓✓✓ SUCCESS ✓✓✓")
             logger.info(f"Title: {result['title']}")
-            logger.info(f"Ingredients: {len(result['ingredients'])} items | Instructions: {len(result['instructions'])} steps")
-            if result.get('prep_time'):
+            logger.info(
+                f"Ingredients: {len(result['ingredients'])} items | Instructions: {len(result['instructions'])} steps"
+            )
+            if result.get("prep_time"):
                 logger.info(f"Prep time: {result['prep_time']}")
-            if result.get('cook_time'):
+            if result.get("cook_time"):
                 logger.info(f"Cook time: {result['cook_time']}")
-            if result.get('servings'):
+            if result.get("servings"):
                 logger.info(f"Servings: {result['servings']}")
             logger.info(f"{'='*70}\n")
             return result
-                
+
         except ResponseError as e:
             error_msg = str(e)
             if "not found" in error_msg.lower():
-                logger.error(f"❌ Ollama model '{self.model}' not found. Please pull it first with: ollama pull {self.model}")
-                raise Exception(f"Ollama model '{self.model}' not found. Pull it with: ollama pull {self.model}")
+                logger.error(
+                    f"❌ Ollama model '{self.model}' not found. Please pull it first with: ollama pull {self.model}"
+                )
+                raise Exception(
+                    f"Ollama model '{self.model}' not found. Pull it with: ollama pull {self.model}"
+                )
             elif "connection" in error_msg.lower():
                 logger.error("❌ Cannot connect to Ollama service. Is it running?")
-                raise Exception("Cannot connect to Ollama service. Is it running on localhost:11434?")
+                raise Exception(
+                    "Cannot connect to Ollama service. Is it running on localhost:11434?"
+                )
             else:
                 logger.error(f"❌ Ollama service error: {error_msg}")
                 raise Exception(f"Ollama service error: {error_msg}")
-                
+
         except FileNotFoundError as e:
             logger.error(f"❌ File error: {e}")
             raise
@@ -178,66 +259,83 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
             "Text:\n" + extracted_text
         )
 
-
         messages = [
-            {'role': 'system', 'content': system_msg},
-            {'role': 'user', 'content': user_msg},
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
         ]
 
         options = {
-            'temperature': 0,
-            'top_p': 0.95,
-            'top_k': 40,
-            'repeat_penalty': 1.1,
-            'num_predict': 2048,
+            "temperature": 0,
+            "top_p": 0.95,
+            "top_k": 40,
+            "repeat_penalty": 1.1,
+            "num_predict": 2048,
         }
 
         schema_format = RecipeSchema.model_json_schema()
-        use_format_param = 'vision' not in (self.structure_model or '')
+        use_format_param = "vision" not in (self.structure_model or "")
 
         # Try up to 2 corrective retries if the model emits prose or invalid JSON
-        last_response_text = ''
+        last_response_text = ""
         for attempt in range(3):  # initial + 2 retries
             try:
                 if attempt == 0:
-                    logger.info(f"  [Attempt 1/3] Sending structuring request with schema format...")
+                    logger.info(
+                        f"  [Attempt 1/3] Sending structuring request with schema format..."
+                    )
                 else:
-                    logger.info(f"  [Attempt {attempt+1}/3] Retry with corrective message...")
-                
-                response = chat(
+                    logger.info(
+                        f"  [Attempt {attempt+1}/3] Retry with corrective message..."
+                    )
+
+                response = self.client.chat(
                     model=self.structure_model,
                     messages=messages,
                     stream=False,
                     format=schema_format if use_format_param else None,
                     options=options,
                 )
-                
+
                 # Try to get content from various fields
                 response_text = response.message.content
-                
+
                 # If content is empty, check thinking field
-                if not response_text and hasattr(response.message, 'thinking') and response.message.thinking:
+                if (
+                    not response_text
+                    and hasattr(response.message, "thinking")
+                    and response.message.thinking
+                ):
                     logger.info(f"    [DEBUG] Content empty, using thinking field")
                     response_text = response.message.thinking
-                
+
                 # Log full response structure for debugging if empty
                 if not response_text:
-                    logger.warning(f"    [DEBUG] Empty response. Message fields: {dir(response.message)}")
-                    logger.warning(f"    [DEBUG] Message dict: {response.message.__dict__}")
-                
+                    logger.warning(
+                        f"    [DEBUG] Empty response. Message fields: {dir(response.message)}"
+                    )
+                    logger.warning(
+                        f"    [DEBUG] Message dict: {response.message.__dict__}"
+                    )
+
                 last_response_text = response_text
                 logger.info(f"    ✓ Response received: {len(response_text)} chars")
-                
+
                 recipe_json = json.loads(response_text)
                 logger.info(f"    ✓ Valid JSON parsed")
-                
+
                 recipe_data = RecipeSchema(**recipe_json)
                 logger.info(f"    ✓ Schema validation passed")
-                logger.info(f"  ✓✓ SUCCESS on attempt {attempt + 1}: '{recipe_data.title}'")
+                logger.info(
+                    f"  ✓✓ SUCCESS on attempt {attempt + 1}: '{recipe_data.title}'"
+                )
                 return recipe_data.model_dump()
             except (json.JSONDecodeError, ValidationError) as e:
-                logger.warning(f"    ❌ Attempt {attempt + 1} failed: {type(e).__name__}")
-                logger.warning(f"       Response text (first 200 chars): '{response_text[:200] if response_text else '[EMPTY]'}'")
+                logger.warning(
+                    f"    ❌ Attempt {attempt + 1} failed: {type(e).__name__}"
+                )
+                logger.warning(
+                    f"       Response text (first 200 chars): '{response_text[:200] if response_text else '[EMPTY]'}'"
+                )
                 if isinstance(e, json.JSONDecodeError):
                     logger.debug(f"       JSON error: {e.msg} at position {e.pos}")
                 else:
@@ -249,9 +347,9 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
                     "Use null for missing fields."
                 )
                 messages = [
-                    {'role': 'system', 'content': system_msg},
-                    {'role': 'user', 'content': user_msg},
-                    {'role': 'user', 'content': corrective},
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                    {"role": "user", "content": corrective},
                 ]
                 continue
 
@@ -262,7 +360,9 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
             logger.info(f"    ✓ Found JSON block in response")
             try:
                 recipe_data = RecipeSchema(**extracted)
-                logger.info(f"  ✓✓ Defensive extraction succeeded: '{recipe_data.title}'")
+                logger.info(
+                    f"  ✓✓ Defensive extraction succeeded: '{recipe_data.title}'"
+                )
                 return recipe_data.model_dump()
             except ValidationError as e:
                 logger.error(f"    ❌ Extracted JSON failed validation: {e}")
@@ -275,7 +375,7 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
         """Extract first valid JSON object from text, handling various formats."""
         if not text:
             return None
-        
+
         # Try fenced ```json blocks first
         fence = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text, re.IGNORECASE)
         if fence:
@@ -283,26 +383,28 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
                 return json.loads(fence.group(1))
             except json.JSONDecodeError:
                 pass
-        
+
         # Try to find valid JSON by looking for { and finding matching }
         # Start from each { and expand outward until valid JSON is found
-        brace_starts = [m.start() for m in re.finditer(r'\{', text)]
+        brace_starts = [m.start() for m in re.finditer(r"\{", text)]
         for start_pos in brace_starts:
             # Try increasingly longer substrings
             for end_pos in range(len(text), start_pos, -1):
                 candidate = text[start_pos:end_pos]
                 try:
                     result = json.loads(candidate)
-                    logger.debug(f"Successfully extracted JSON from position {start_pos}:{end_pos}")
+                    logger.debug(
+                        f"Successfully extracted JSON from position {start_pos}:{end_pos}"
+                    )
                     return result
                 except json.JSONDecodeError:
                     continue
-        
+
         return None
 
     def check_connection(self) -> bool:
         """Check if Ollama service is available and required model is installed.
-        
+
         Returns:
             True if service and model are available, False otherwise
         """
@@ -311,21 +413,21 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
             logger.info(f"Testing Ollama connection...")
             logger.info(f"  Vision model: {self.model}")
             logger.info(f"  Structure model: {self.structure_model}")
-            response = chat(
+            logger.info(f"  Host: {self.host}")
+
+            # Simple check to see if we can reach the server
+            response = self.client.chat(
                 model=self.model,
-                messages=[{
-                    'role': 'user',
-                    'content': 'Hello'
-                }],
+                messages=[{"role": "user", "content": "Hello"}],
                 stream=False,
-                options={'num_predict': 1}
+                options={"num_predict": 1},
             )
             logger.info(f"✓ Ollama service online")
             logger.info(f"✓ Vision model '{self.model}' ready")
             if self.structure_model != self.model:
                 logger.info(f"✓ Structure model '{self.structure_model}' available")
             return True
-            
+
         except ResponseError as e:
             if "not found" in str(e).lower():
                 logger.error(f"❌ Model '{self.model}' not found on system")
@@ -333,7 +435,7 @@ Extract EVERY piece of visible text exactly as you see it. Return only the compl
             else:
                 logger.error(f"❌ Ollama service error: {e}")
             return False
-            
+
         except Exception as e:
             logger.error(f"❌ Cannot reach Ollama (localhost:11434): {e}")
             return False

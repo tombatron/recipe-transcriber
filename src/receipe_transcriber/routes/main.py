@@ -42,12 +42,36 @@ def index():
 
 @bp.route("/recipes")
 def recipes():
+    from datetime import datetime, timedelta, timezone
+
+    # Define timeout threshold (e.g., 10 minutes)
+    TIMEOUT_MINUTES = 10
+    timeout_threshold = datetime.now(timezone.utc) - timedelta(minutes=TIMEOUT_MINUTES)
+
+    # Get all incomplete jobs
     active_transcription_jobs = (
         db.session.query(TranscriptionJob)
         .filter(TranscriptionJob.completed_at == None)  # noqa: E711
         .order_by(TranscriptionJob.created_at.asc())
         .all()
     )
+
+    # Check for timed out jobs and mark them as failed
+    for job in active_transcription_jobs:
+        if job.status == "processing":
+            # Make created_at timezone-aware if it's naive (for SQLite compatibility)
+            job_created_at = job.created_at
+            if job_created_at.tzinfo is None:
+                job_created_at = job_created_at.replace(tzinfo=timezone.utc)
+
+            if job_created_at < timeout_threshold:
+                job.status = "failed"
+                job.error_message = (
+                    "Processing timed out. Please try reprocessing this recipe."
+                )
+                job.completed_at = datetime.now(timezone.utc)
+
+    db.session.commit()
 
     recent_recipes = (
         db.session.query(Recipe).order_by(Recipe.created_at.desc()).limit(5)
@@ -208,6 +232,26 @@ def reprocess_recipe(external_recipe_id):
         ],
         kwargs={"is_reprocessing": True},
     )
+
+    return redirect(url_for("main.index"))
+
+
+@bp.route("/recipes/<string:external_recipe_id>/delete-failed-job", methods=["POST"])
+def delete_failed_job(external_recipe_id):
+    """Delete a failed transcription job. Turbo will remove the element from DOM."""
+    job = (
+        db.session.query(TranscriptionJob)
+        .filter(TranscriptionJob.external_recipe_id == external_recipe_id)
+        .one_or_none()
+    )
+
+    if job and job.status == "failed":
+        # Delete the job
+        db.session.delete(job)
+        db.session.commit()
+
+        # Refresh entire results area
+        return turbo.stream(turbo.replace(recipes(), target="results-area"))
 
     return redirect(url_for("main.index"))
 
