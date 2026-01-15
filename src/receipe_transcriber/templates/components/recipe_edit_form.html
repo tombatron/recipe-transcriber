@@ -1,0 +1,252 @@
+{% from 'components/icons.html' import icon %}
+<turbo-frame id="recipe-{{ recipe.external_recipe_id }}" class="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+  <form id="edit-recipe-form" 
+        action="{{ url_for('main.update_recipe', external_recipe_id=recipe.external_recipe_id) }}" 
+        method="post"
+        data-recipe-edit-form>
+    
+    <!-- Form Header -->
+    <div class="mb-6">
+      <h2 class="text-3xl font-semibold text-gray-900 mb-2">Edit Recipe</h2>
+      <p class="text-sm text-gray-600">Make changes to your transcribed recipe</p>
+    </div>
+
+    <!-- Recipe Title (Required) -->
+    <div class="mb-6">
+      <label for="title" class="block text-sm font-semibold text-gray-900 mb-2">
+        Title <span class="text-red-600">*</span>
+      </label>
+      <input type="text" 
+             id="title" 
+             name="title" 
+             value="{{ recipe.title }}"
+             required
+             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 {% if errors and errors.title %}border-red-300 bg-red-50{% endif %}"
+             data-validation-target>
+      {% if errors and errors.title %}
+      <p class="mt-1 text-sm text-red-600" data-error-message>{{ errors.title }}</p>
+      {% endif %}
+    </div>
+
+    <!-- Recipe Metadata -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div>
+        <label for="prep_time" class="block text-sm font-semibold text-gray-900 mb-2">Prep Time</label>
+        <input type="text" 
+               id="prep_time" 
+               name="prep_time" 
+               value="{{ recipe.prep_time or '' }}"
+               placeholder="e.g., 15 minutes"
+               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+      </div>
+      <div>
+        <label for="cook_time" class="block text-sm font-semibold text-gray-900 mb-2">Cook Time</label>
+        <input type="text" 
+               id="cook_time" 
+               name="cook_time" 
+               value="{{ recipe.cook_time or '' }}"
+               placeholder="e.g., 30 minutes"
+               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+      </div>
+      <div>
+        <label for="servings" class="block text-sm font-semibold text-gray-900 mb-2">Servings</label>
+        <input type="text" 
+               id="servings" 
+               name="servings" 
+               value="{{ recipe.servings or '' }}"
+               placeholder="e.g., 4 servings"
+               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+      </div>
+    </div>
+
+    <!-- Ingredients Section -->
+    <div class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-xl font-semibold text-gray-900">Ingredients</h3>
+        <button type="button" 
+                onclick="recipeEdit.addIngredient()"
+                class="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm">
+          {{ icon('plus', 'w-4 h-4 inline-block mr-1') }}
+          Add Ingredient
+        </button>
+      </div>
+      <div id="ingredients-list" class="space-y-3">
+        {% if recipe.ingredients %}
+          {% for ingredient in recipe.ingredients|sort(attribute='order') %}
+          <div class="ingredient-row flex gap-2 items-start p-2 border border-gray-200 rounded-lg hover:border-amber-300 transition-colors cursor-move" 
+               data-ingredient-row
+               draggable="true">
+            <input type="text" 
+                   name="ingredients[{{ loop.index0 }}][quantity]" 
+                   value="{{ ingredient.quantity or '' }}"
+                   placeholder="Qty"
+                   class="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+            <input type="text" 
+                   name="ingredients[{{ loop.index0 }}][unit]" 
+                   value="{{ ingredient.unit or '' }}"
+                   placeholder="Unit"
+                   class="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+            <input type="text" 
+                   name="ingredients[{{ loop.index0 }}][item]" 
+                   value="{{ ingredient.item }}"
+                   placeholder="Item *"
+                   class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+            <button type="button" 
+                    onclick="recipeEdit.removeIngredient(this)"
+                    class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0">
+              {{ icon('trash', 'w-5 h-5') }}
+            </button>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="ingredient-row flex gap-2 items-start p-2 border border-gray-200 rounded-lg hover:border-amber-300 transition-colors cursor-move" 
+               data-ingredient-row
+               draggable="true">
+            <input type="text" 
+                   name="ingredients[0][quantity]" 
+                   placeholder="Qty"
+                   class="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+            <input type="text" 
+                   name="ingredients[0][unit]" 
+                   placeholder="Unit"
+                   class="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+            <input type="text" 
+                   name="ingredients[0][item]" 
+                   placeholder="Item *"
+                   class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+            <button type="button" 
+                    onclick="recipeEdit.removeIngredient(this)"
+                    class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0">
+              {{ icon('trash', 'w-5 h-5') }}
+            </button>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Instructions Section -->
+    <div class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-xl font-semibold text-gray-900">Instructions</h3>
+        <button type="button" 
+                onclick="recipeEdit.addInstruction()"
+                class="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm">
+          {{ icon('plus', 'w-4 h-4 inline-block mr-1') }}
+          Add Step
+        </button>
+      </div>
+      <div id="instructions-list" class="space-y-3">
+        {% if recipe.instructions %}
+          {% for instruction in recipe.instructions|sort(attribute='step_number') %}
+          <div class="instruction-row flex gap-3 items-start p-3 border border-gray-200 rounded-lg hover:border-amber-300 transition-colors cursor-move" 
+               data-instruction-row
+               draggable="true">
+            <div class="flex items-center justify-center w-8 h-8 bg-amber-600 text-white rounded-full font-semibold flex-shrink-0 mt-1">
+              {{ loop.index }}
+            </div>
+            <textarea name="instructions[{{ loop.index0 }}][description]" 
+                      rows="2"
+                      placeholder="Instruction step..."
+                      class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 resize-y">{{ instruction.description }}</textarea>
+            <button type="button" 
+                    onclick="recipeEdit.removeInstruction(this)"
+                    class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0">
+              {{ icon('trash', 'w-5 h-5') }}
+            </button>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="instruction-row flex gap-3 items-start p-3 border border-gray-200 rounded-lg hover:border-amber-300 transition-colors cursor-move" 
+               data-instruction-row
+               draggable="true">
+            <div class="flex items-center justify-center w-8 h-8 bg-amber-600 text-white rounded-full font-semibold flex-shrink-0 mt-1">
+              1
+            </div>
+            <textarea name="instructions[0][description]" 
+                      rows="2"
+                      placeholder="Instruction step..."
+                      class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 resize-y"></textarea>
+            <button type="button" 
+                    onclick="recipeEdit.removeInstruction(this)"
+                    class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0">
+              {{ icon('trash', 'w-5 h-5') }}
+            </button>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="mb-8">
+      <label for="notes" class="block text-sm font-semibold text-gray-900 mb-2">Notes</label>
+      <textarea id="notes" 
+                name="notes" 
+                rows="3"
+                placeholder="Any additional notes or tips..."
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 resize-y">{{ recipe.notes or '' }}</textarea>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="flex gap-3 pt-6 border-t border-gray-200">
+      <button type="submit" 
+              class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-lg transition-colors shadow-sm hover:shadow-md">
+        {{ icon('check', 'w-5 h-5 inline-block mr-2') }}
+        Save Changes
+      </button>
+      <a href="{{ url_for('main.recipe_detail_card', external_recipe_id=recipe.external_recipe_id) }}" 
+         class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold px-6 py-3 rounded-lg transition-colors text-center"
+         data-cancel-button>
+        {{ icon('close', 'w-5 h-5 inline-block mr-2') }}
+        Cancel
+      </a>
+    </div>
+  </form>
+
+  <!-- Ingredient Template -->
+  <template id="ingredient-template">
+    <div class="ingredient-row flex gap-2 items-start p-2 border border-gray-200 rounded-lg hover:border-amber-300 transition-colors cursor-move" 
+         data-ingredient-row
+         draggable="true">
+      <input type="text" 
+             name="ingredients[INDEX][quantity]" 
+             placeholder="Qty"
+             class="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+      <input type="text" 
+             name="ingredients[INDEX][unit]" 
+             placeholder="Unit"
+             class="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+      <input type="text" 
+             name="ingredients[INDEX][item]" 
+             placeholder="Item *"
+             class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+      <button type="button" 
+              onclick="recipeEdit.removeIngredient(this)"
+              class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0">
+        {{ icon('trash', 'w-5 h-5') }}
+      </button>
+    </div>
+  </template>
+
+  <!-- Instruction Template -->
+  <template id="instruction-template">
+    <div class="instruction-row flex gap-3 items-start p-3 border border-gray-200 rounded-lg hover:border-amber-300 transition-colors cursor-move" 
+         data-instruction-row
+         draggable="true">
+      <div class="flex items-center justify-center w-8 h-8 bg-amber-600 text-white rounded-full font-semibold flex-shrink-0 mt-1">
+        NUM
+      </div>
+      <textarea name="instructions[INDEX][description]" 
+                rows="2"
+                placeholder="Instruction step..."
+                class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 resize-y"></textarea>
+      <button type="button" 
+              onclick="recipeEdit.removeInstruction(this)"
+              class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0">
+        {{ icon('trash', 'w-5 h-5') }}
+      </button>
+    </div>
+  </template>
+</turbo-frame>
+    </button>
+  </div>
+</template>

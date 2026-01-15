@@ -14,7 +14,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-from receipe_transcriber.models import Recipe, TranscriptionJob
+from receipe_transcriber.models import Ingredient, Instruction, Recipe, TranscriptionJob
 from receipe_transcriber.tasks.transcription_tasks import transcribe_recipe_task
 
 from .. import db, turbo
@@ -269,3 +269,125 @@ def recipe_detail(external_recipe_id):
         return "Recipe not found", 404
 
     return render_template("recipe_detail.html", recipe=recipe)
+
+
+@bp.route("/recipes/<string:external_recipe_id>/edit")
+def edit_recipe(external_recipe_id):
+    """Edit a recipe - returns edit form in Turbo frame."""
+    recipe = (
+        db.session.query(Recipe)
+        .filter(Recipe.external_recipe_id == external_recipe_id)
+        .one_or_none()
+    )
+
+    if not recipe:
+        return "Recipe not found", 404
+
+    return render_template(
+        "components/recipe_edit_form.html", recipe=recipe, errors=None
+    )
+
+
+@bp.route("/recipes/<string:external_recipe_id>/detail-card")
+def recipe_detail_card(external_recipe_id):
+    """Return just the recipe card component for Cancel action."""
+    recipe = (
+        db.session.query(Recipe)
+        .filter(Recipe.external_recipe_id == external_recipe_id)
+        .one_or_none()
+    )
+
+    if not recipe:
+        return "Recipe not found", 404
+
+    # Get the associated transcription job for metadata display
+    job = recipe.transcription_job
+
+    return render_template("components/recipe_card.html", recipe=recipe, job=job)
+
+
+@bp.route("/recipes/<string:external_recipe_id>/update", methods=["POST"])
+def update_recipe(external_recipe_id):
+    """Update a recipe with form data. Returns Turbo stream replacement."""
+    recipe = (
+        db.session.query(Recipe)
+        .filter(Recipe.external_recipe_id == external_recipe_id)
+        .one_or_none()
+    )
+
+    if not recipe:
+        return "Recipe not found", 404
+
+    # Validate required fields
+    errors = {}
+    title = request.form.get("title", "").strip()
+    if not title:
+        errors["title"] = "Title is required"
+
+    # If validation fails, return form with errors
+    if errors:
+        return render_template(
+            "components/recipe_edit_form.html", recipe=recipe, errors=errors
+        )
+
+    # Update recipe metadata
+    recipe.title = title
+    recipe.prep_time = request.form.get("prep_time", "").strip() or None
+    recipe.cook_time = request.form.get("cook_time", "").strip() or None
+    recipe.servings = request.form.get("servings", "").strip() or None
+    recipe.notes = request.form.get("notes", "").strip() or None
+
+    # Delete existing ingredients and instructions (cascade handles this)
+    for ingredient in recipe.ingredients:
+        db.session.delete(ingredient)
+    for instruction in recipe.instructions:
+        db.session.delete(instruction)
+
+    # Parse and create new ingredients
+    ingredient_indices = []
+    for key in request.form.keys():
+        if key.startswith("ingredients[") and key.endswith("][item]"):
+            # Extract index from "ingredients[0][item]"
+            idx = int(key.split("[")[1].split("]")[0])
+            ingredient_indices.append(idx)
+
+    for idx in sorted(set(ingredient_indices)):
+        item = request.form.get(f"ingredients[{idx}][item]", "").strip()
+        if item:  # Only add if item is not empty
+            quantity = (
+                request.form.get(f"ingredients[{idx}][quantity]", "").strip() or None
+            )
+            unit = request.form.get(f"ingredients[{idx}][unit]", "").strip() or None
+
+            ingredient = Ingredient(item=item, quantity=quantity, unit=unit, order=idx)
+            recipe.ingredients.append(ingredient)
+
+    # Parse and create new instructions
+    instruction_indices = []
+    for key in request.form.keys():
+        if key.startswith("instructions[") and key.endswith("][description]"):
+            # Extract index from "instructions[0][description]"
+            idx = int(key.split("[")[1].split("]")[0])
+            instruction_indices.append(idx)
+
+    for idx in sorted(set(instruction_indices)):
+        description = request.form.get(f"instructions[{idx}][description]", "").strip()
+        if description:  # Only add if description is not empty
+            instruction = Instruction(
+                step_number=idx + 1, description=description  # step_number is 1-indexed
+            )
+            recipe.instructions.append(instruction)
+
+    # Commit changes
+    db.session.commit()
+
+    # Get the associated transcription job for metadata display
+    job = recipe.transcription_job
+
+    # Return Turbo stream to replace the frame with updated recipe card
+    return turbo.stream(
+        turbo.replace(
+            render_template("components/recipe_card.html", recipe=recipe, job=job),
+            target=f"recipe-{external_recipe_id}",
+        )
+    )
